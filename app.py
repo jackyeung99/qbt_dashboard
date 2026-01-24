@@ -16,5 +16,9 @@ def create_app() -> Dash:
     return app
 
 
+
+app = create_app()
+server = app.server  
+
 if __name__ == "__main__":
-    create_app().run(debug=True)
+    app.run(debug=True)
