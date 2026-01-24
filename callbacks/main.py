@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from dash import Input, Output, State, ctx
 
-from dashboard.services.data_access import (
+from services.data_access import (
     load_runs,
     read_timeseries_for_run,
     read_meta_for_run,
@@ -15,9 +15,8 @@ from dashboard.services.data_access import (
 )
 
 
-from ..layout.components import badge_row, kv_panel
-
-from qbt.metrics.plots import PLOT_REGISTRY
+from layout.components import badge_row, kv_panel
+from plots.plots import PLOT_REGISTRY
 
 
 def _df_to_dash(df: pd.DataFrame):
