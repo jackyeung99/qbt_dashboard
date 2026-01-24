@@ -1,8 +1,8 @@
 {
-  "created_at_utc": "2026-01-24T20:35:12.208210+00:00",
+  "created_at_utc": "2026-01-24T21:21:36.057215+00:00",
   "data_path": "data/processed/modeling_table.parquet",
   "params": {},
-  "run_id": "20260124_203512_cacb352e_BuyHold_SPY",
+  "run_id": "20260124_212136_c11942f2_BuyHold_SPY",
   "strategy_name": "BuyHold",
   "tag": "sweep_spy",
   "universe": "SPY",
