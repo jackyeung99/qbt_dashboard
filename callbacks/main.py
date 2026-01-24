@@ -11,7 +11,7 @@ from services.data_access import (
     read_meta_for_run,
     meta_params_table,
     safe_read_metrics,
-    StoreContext,
+    ResultsStore,
 )
 
 
@@ -59,7 +59,7 @@ def _compute_kpis(ts: pd.DataFrame) -> dict:
     return dict(total_return=total_return, cagr=cagr, vol=vol, mdd=mdd, sharpe=sharpe)
 
 
-def register_callbacks(app, store_ctx: StoreContext):
+def register_callbacks(app, store_ctx: ResultsStore):
 
     # ------------------------------------------------------------
     # Populate strategy dropdown + run dropdown + runs table
@@ -223,6 +223,7 @@ def register_callbacks(app, store_ctx: StoreContext):
 
         # ---------- equity plot ----------
         plot_fn = PLOT_REGISTRY.get("equity")
+
         if plot_fn is not None:
             fig = plot_fn(ts=ts, run_id=run_id, meta=meta)
         else:
