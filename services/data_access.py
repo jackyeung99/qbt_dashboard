@@ -3,18 +3,75 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import json
+from typing import Any, Mapping
+
 import pandas as pd
 
 
+# ----------------------------
+# Utils
+# ----------------------------
+
 def _clean(x: str) -> str:
-    """
-    Keep filesystem-safe names similar to your original _clean().
-    """
+    """Filesystem-safe string."""
     return str(x).strip().replace("/", "_").replace("\\", "_")
 
 
+def _read_table(csv_path: Path, parquet_path: Path) -> pd.DataFrame:
+    """
+    Prefer CSV if present (deployment-friendly). Fall back to parquet.
+    Return empty df if neither exists.
+    """
+    if csv_path.exists():
+        return pd.read_csv(csv_path)
+    if parquet_path.exists():
+        return pd.read_parquet(parquet_path)
+    return pd.DataFrame()
+
+
+def _read_timeseries(csv_path: Path, parquet_path: Path, time_col: str = "timestamp") -> pd.DataFrame:
+    """
+    Read timeseries and set time_col as DatetimeIndex.
+    Works for either CSV (parse_dates) or parquet.
+    """
+    if csv_path.exists():
+        # If time_col not present, parse_dates silently does nothing only if column exists,
+        # but pandas will error if it's missing. So read first, then parse if present.
+        df = pd.read_csv(csv_path)
+        if time_col in df.columns:
+            df[time_col] = pd.to_datetime(df[time_col], errors="coerce")
+    elif parquet_path.exists():
+        df = pd.read_parquet(parquet_path)
+    else:
+        return pd.DataFrame()
+
+    if time_col in df.columns:
+        df = df.set_index(time_col)
+
+    # Ensure datetime index
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index, errors="coerce")
+
+    df = df.sort_index()
+    return df
+
+
+def _flatten(d: Any, prefix: str = "") -> dict[str, Any]:
+    """Flatten nested dict into dot keys: {'a': {'b': 1}} -> {'a.b': 1}"""
+    out: dict[str, Any] = {}
+    if not isinstance(d, dict):
+        return out
+    for k, v in d.items():
+        key = f"{prefix}.{k}" if prefix else str(k)
+        if isinstance(v, dict):
+            out.update(_flatten(v, key))
+        else:
+            out[key] = v
+    return out
+
+
 # ----------------------------
-# Simple filesystem-based "store" (mirrors StoragePaths layout)
+# Store
 # ----------------------------
 
 @dataclass(frozen=True)
@@ -22,7 +79,7 @@ class ResultsStore:
     """
     Read-only access to exported dashboard artifacts under <root>/results.
 
-    Mirrors your original StoragePaths layout:
+    Layout:
       results/
         runs.(csv|parquet)
         metrics.(csv|parquet)
@@ -30,10 +87,11 @@ class ResultsStore:
         timeseries/strategy=<strategy>/universe=<universe>/run_id=<run_id>/timeseries.(csv|parquet)
     """
     root: Path
+    results_root: str = "results"
 
     @property
     def results_dir(self) -> Path:
-        return self.root / "results"
+        return self.root / self.results_root
 
     # ---- global artifacts ----
     @property
@@ -56,12 +114,7 @@ class ResultsStore:
     def meta_path(self, run_id: str) -> Path:
         return self.results_dir / "runs" / _clean(run_id) / "meta.json"
 
-    def timeseries_path(self, strategy: str, universe: str, run_id: str) -> tuple[Path, Path]:
-        """
-        Matches original StoragePaths.run_timeseries_key(...)/timeseries.parquet, but as filesystem Paths.
-
-        results/timeseries/strategy=<strategy>/universe=<universe>/run_id=<run_id>/timeseries.(parquet|csv)
-        """
+    def timeseries_paths(self, strategy: str, universe: str, run_id: str) -> tuple[Path, Path]:
         base = (
             self.results_dir
             / "timeseries"
@@ -71,79 +124,47 @@ class ResultsStore:
         )
         return base / "timeseries.parquet", base / "timeseries.csv"
 
+    # ---- read helpers (single source of truth) ----
+    def read_runs(self) -> pd.DataFrame:
+        return _read_table(self.runs_path_csv, self.runs_path_parquet)
 
-def _read_table(csv_path: Path, parquet_path: Path) -> pd.DataFrame:
+    def read_metrics(self) -> pd.DataFrame:
+        return _read_table(self.metrics_path_csv, self.metrics_path_parquet)
+
+
+def build_store(base_dir: Path | None = None, results_root: str = "results") -> ResultsStore:
     """
-    Prefer CSV if present (deployment-friendly). Fall back to parquet if present.
-    Return empty df if neither exists.
-    """
-    if csv_path.exists():
-        return pd.read_csv(csv_path)
-    if parquet_path.exists():
-        # If you removed parquet deps for deployment, ensure you shipped CSV instead.
-        return pd.read_parquet(parquet_path)
-    return pd.DataFrame()
-
-def _read_timeseries(csv_path: Path, parquet_path: Path, time_col: str = "date") -> pd.DataFrame:
-    """
-    Read timeseries and set timestamp column as DatetimeIndex.
-    Assumes exported CSV has a column like 'date' or 'timestamp'.
-    """
-    if csv_path.exists():
-        df = pd.read_csv(csv_path, parse_dates=[time_col])
-    elif parquet_path.exists():
-        df = pd.read_parquet(parquet_path)
-    else:
-        return pd.DataFrame()
-
-    # If time column exists, set as index
-    if time_col in df.columns:
-        df = df.set_index(time_col)
-
-    # Ensure datetime index
-    if not isinstance(df.index, pd.DatetimeIndex):
-        df.index = pd.to_datetime(df.index, errors="coerce")
-
-    df = df.sort_index()
-    return df
-
-
-# ----------------------------
-# Public API (mirrors your old functions)
-# ----------------------------
-
-def build_store(base_dir: Path | None = None) -> ResultsStore:
-    """
-    Build a store rooted at the repo root.
-
-    Recommended usage:
-        store = build_store(Path("."))
-
-    If base_dir is None, default to directory containing this module.
+    Build a store rooted at repo root (or provided base_dir).
     """
     root = Path(base_dir) if base_dir is not None else Path(__file__).resolve().parents[0]
-    return ResultsStore(root=root)
+    return ResultsStore(root=root, results_root=results_root)
 
+
+# ----------------------------
+# Public API for the dashboard
+# ----------------------------
 
 def load_runs(store: ResultsStore) -> pd.DataFrame:
-    runs = _read_table(store.runs_path_csv, store.runs_path_parquet)
+    """
+    Load runs and add a friendly label column.
+    Keeps runs 'as-is' otherwise (no metrics join here).
+    """
+    runs = store.read_runs()
     if runs.empty:
         return runs
 
     runs = runs.copy()
 
-    # Normalize expected columns (be forgiving)
+    # Normalize expected columns
     for col in ["run_id", "strategy_name", "universe"]:
         if col not in runs.columns:
             runs[col] = ""
 
-    runs["label"] = (
-        runs["run_id"].astype(str)
-        + " | "
-        + runs["strategy_name"].astype(str)
-        + " | "
-        + runs["universe"].astype(str)
-    )
+    runs["run_id"] = runs["run_id"].astype(str)
+    runs["strategy_name"] = runs["strategy_name"].astype(str)
+    runs["universe"] = runs["universe"].astype(str)
+
+    runs["label"] = runs["run_id"] + " | " + runs["strategy_name"] + " | " + runs["universe"]
 
     if "created_at_utc" in runs.columns:
         runs = runs.sort_values("created_at_utc", ascending=False)
@@ -153,12 +174,35 @@ def load_runs(store: ResultsStore) -> pd.DataFrame:
 
 def safe_read_metrics(store: ResultsStore) -> pd.DataFrame:
     try:
-        return _read_table(store.metrics_path_csv, store.metrics_path_parquet)
+        return store.read_metrics()
     except Exception:
         return pd.DataFrame()
 
 
-def read_meta_for_run(store: ResultsStore, run_id: str) -> dict:
+def load_runs_with_metrics(store: ResultsStore) -> pd.DataFrame:
+    """
+    Join runs + metrics (on run_id) so the table can sort/filter by Sharpe/CAGR/etc.
+    """
+    runs = load_runs(store)
+    if runs.empty:
+        return runs
+
+    metrics = safe_read_metrics(store)
+    if metrics.empty:
+        return runs
+
+    metrics = metrics.copy()
+    if "run_id" not in metrics.columns:
+        return runs
+
+    metrics["run_id"] = metrics["run_id"].astype(str)
+
+    # Avoid accidental column collisions; metrics wins only for metric-like names
+    df = runs.merge(metrics, on="run_id", how="left", suffixes=("", "_metric"))
+    return df
+
+
+def read_meta_for_run(store: ResultsStore, run_id: str) -> dict[str, Any]:
     path = store.meta_path(run_id)
     if not path.exists():
         return {"info": f"meta.json not found for run_id={run_id}", "path": str(path)}
@@ -166,67 +210,46 @@ def read_meta_for_run(store: ResultsStore, run_id: str) -> dict:
     try:
         return json.loads(path.read_text())
     except Exception as e:
-        return {
-            "info": "failed to read meta.json",
-            "run_id": run_id,
-            "error": str(e),
-            "path": str(path),
-        }
+        return {"info": "failed to read meta.json", "run_id": run_id, "error": str(e), "path": str(path)}
 
 
-def _flatten(d, prefix: str = "") -> dict:
-    """Flatten nested dict into dot keys: {'a': {'b': 1}} -> {'a.b': 1}"""
-    out: dict = {}
-    if not isinstance(d, dict):
-        return out
-
-    for k, v in d.items():
-        key = f"{prefix}.{k}" if prefix else str(k)
-        if isinstance(v, dict):
-            out.update(_flatten(v, key))
-        else:
-            out[key] = v
-    return out
-
-
-def meta_params_table(meta: dict) -> pd.DataFrame:
+def meta_params_table(meta: Mapping[str, Any] | None) -> pd.DataFrame:
     if not isinstance(meta, dict) or not meta:
         return pd.DataFrame([{"parameter": "info", "value": "meta is empty"}])
 
-    # Try known param containers first
-    candidate = None
+    # prefer known param containers
+    candidate: Any = None
     for key in ["params", "strategy_params", "model_params", "spec"]:
         if isinstance(meta.get(key), dict) and meta[key]:
             candidate = meta[key]
             break
 
     if candidate is None:
-        # fallback: use entire meta minus obvious non-params
         candidate = {k: v for k, v in meta.items() if k not in ["run_id", "created_at", "created_at_utc"]}
 
     flat = _flatten(candidate)
     if not flat:
         return pd.DataFrame([{"parameter": "info", "value": "No parameters found in meta.json"}])
 
-    return pd.DataFrame(
-        [
+    rows = []
+    for k, v in sorted(flat.items()):
+        rows.append(
             {
                 "parameter": k,
                 "value": json.dumps(v) if isinstance(v, (list, dict)) else v,
             }
-            for k, v in sorted(flat.items())
-        ]
-    )
+        )
+    return pd.DataFrame(rows)
 
 
-def read_timeseries_for_run(store: ResultsStore, run_id: str):
+def read_timeseries_for_run(store: ResultsStore, run_id: str, time_col: str = "timestamp") -> tuple[pd.Series, pd.DataFrame]:
     """
     Returns: (run_row: pd.Series, ts: pd.DataFrame)
 
-    Lookup:
-      1) Load runs table, find the row (strategy_name, universe)
+    Steps:
+      1) Load runs table and find row for run_id (strategy_name, universe)
       2) Read results/timeseries/strategy=<...>/universe=<...>/run_id=<...>/timeseries.(csv|parquet)
-      3) Set timestamp as DatetimeIndex
+      3) Set time_col as DatetimeIndex
     """
     runs = load_runs(store)
     if runs.empty or "run_id" not in runs.columns:
@@ -240,9 +263,9 @@ def read_timeseries_for_run(store: ResultsStore, run_id: str):
     strategy_name = str(row.get("strategy_name", ""))
     universe = str(row.get("universe", ""))
 
-    pq, csv = store.timeseries_path(strategy_name, universe, run_id)
+    pq, csv = store.timeseries_paths(strategy_name, universe, run_id)
+    ts = _read_timeseries(csv, pq, time_col=time_col)
 
-    ts = _read_timeseries(csv, pq, time_col="timestamp")
     if ts.empty:
         raise FileNotFoundError(
             f"Could not find timeseries for run_id={run_id}. Tried:\n"

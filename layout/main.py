@@ -4,6 +4,7 @@ from dash import dcc, html
 
 from .components import card, kpi, spacer, nice_table
 
+
 def make_layout(max_width_px: int = 1500):
     # LEFT: Filters + Runs
     controls = card(
@@ -14,13 +15,17 @@ def make_layout(max_width_px: int = 1500):
             dbc.Row(
                 [
                     dbc.Col(
-                        [dbc.Label("Strategy", className="mb-1"),
-                         dcc.Dropdown(id="strategy_dd", placeholder="All strategies")],
+                        [
+                            dbc.Label("Strategy", className="mb-1"),
+                            dcc.Dropdown(id="strategy_dd", placeholder="All strategies"),
+                        ],
                         md=6,
                     ),
                     dbc.Col(
-                        [dbc.Label("Universe", className="mb-1"),
-                         dcc.Dropdown(id="universe_dd", placeholder="All universes")],
+                        [
+                            dbc.Label("Universe", className="mb-1"),
+                            dcc.Dropdown(id="universe_dd", placeholder="All universes"),
+                        ],
                         md=6,
                     ),
                 ],
@@ -28,8 +33,46 @@ def make_layout(max_width_px: int = 1500):
             ),
             spacer(10),
 
+            # ✅ Sort controls (not shown in table)
+            dbc.Label("Sort by", className="mb-1"),
+            dcc.Dropdown(
+                id="sort_metric_dd",
+                options=[
+                    {"label": "Created time", "value": "created_at_utc"},
+                    {"label": "Sharpe", "value": "sharpe"},
+                    {"label": "CAGR", "value": "cagr"},
+                    {"label": "Max Drawdown", "value": "max_dd"},
+                    {"label": "Volatility", "value": "volatility"},
+                ],
+                value="created_at_utc",
+                clearable=False,
+            ),
+            spacer(6),
+
+            dbc.Label("Direction", className="mb-1"),
+            dbc.RadioItems(
+                id="sort_dir",
+                options=[
+                    {"label": "Desc", "value": "desc"},
+                    {"label": "Asc", "value": "asc"},
+                ],
+                value="desc",
+                inline=True,
+                className="mb-2",
+            ),
+            spacer(10),
+
             dbc.Label("Run", className="mb-1"),
             dcc.Dropdown(id="run_dd", placeholder="Select a run..."),
+
+            spacer(6),
+
+            dbc.Label("Compare with", className="mb-1"),
+            dcc.Dropdown(
+                id="compare_run_dd",
+                placeholder="Select run to compare...",
+                clearable=True,
+            ),
         ],
     )
 
@@ -42,7 +85,10 @@ def make_layout(max_width_px: int = 1500):
                 height_px=540,
                 nowrap=True,
                 selectable=True,
-                filter_action="none",  # cleaner
+                filter_action="none",   # cleaner
+                sort_action="none",   # click headers to sort too (optional)
+                sort_mode="multi",
+                
             )
         ],
     )
@@ -55,11 +101,8 @@ def make_layout(max_width_px: int = 1500):
             dbc.CardHeader("Selected run", style={"fontWeight": 600, "fontSize": "0.95rem"}),
             dbc.CardBody(
                 [
-                    # badges row
                     html.Div(id="run_badges"),
                     spacer(8),
-
-                    # KV label + content
                     html.Div("Model parameters", style={"fontWeight": 600, "opacity": 0.7, "fontSize": "0.85rem"}),
                     spacer(6),
                     html.Div(id="params_kv"),
@@ -93,14 +136,13 @@ def make_layout(max_width_px: int = 1500):
 
     # Page
     return dbc.Container(
-        fluid=True,  # allow full width
+        fluid=True,
         style={
             "maxWidth": f"{max_width_px}px",
             "paddingTop": "18px",
             "paddingBottom": "38px",
-            "backgroundColor": "#BBBBBB",  
-            "minHeight": "100vh",       
-
+            "backgroundColor": "#BBBBBB",
+            "minHeight": "100vh",
         },
         children=[
             dbc.Row(
@@ -120,8 +162,8 @@ def make_layout(max_width_px: int = 1500):
 
             dbc.Row(
                 [
-                    dbc.Col(left, lg=3, md=4, sm=12),   # narrower left on laptop
-                    dbc.Col(right, lg=9, md=8, sm=12),  # wide right
+                    dbc.Col(left, lg=4, md=5, sm=12),
+                    dbc.Col(right, lg=8, md=7, sm=12),
                 ],
                 className="g-4",
             ),

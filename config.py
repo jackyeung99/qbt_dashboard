@@ -8,7 +8,7 @@ class DashboardConfig:
     theme: str = dbc.themes.LUMEN
     base_dir: Path = Path(".")
     results_root: str = "results"
-    max_width_px: int = 1500
+    max_width_px: int = 1750
 
 
 CONFIG = DashboardConfig()

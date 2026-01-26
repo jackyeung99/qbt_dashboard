@@ -114,6 +114,8 @@ def nice_table(
         style_data_conditional=_ODD_ROW + [{"if": {"state": "selected"}, "backgroundColor": "rgba(13, 110, 253, 0.10)"}],
         sort_action="native",
         filter_action="native",
+        tooltip_delay=0,
+        tooltip_duration=None,
     )
 
     if selectable:
