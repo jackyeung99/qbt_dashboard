@@ -35,7 +35,130 @@ def kpi_card(title: str, value_id: str):
         ],
     )
 
-def make_app(runs_summary: pd.DataFrame, equity_curves: pd.DataFrame, thresholds: pd.DataFrame | None):
+def plot_tau_diagnostics(th_run: pd.DataFrame, tau_star: float) -> go.Figure:
+    th_run = th_run.sort_values("tau").copy()
+    tau_star = float(tau_star)
+
+    fig = px.line(
+        th_run,
+        x="tau",
+        y="sharpe_diff",
+        labels={"tau": r"Realized Volatility Threshold $\tau$", "sharpe_diff": r"$\Delta$ Sharpe"},
+        template="simple_white",
+    )
+    fig.update_traces(line=dict(color="black", width=3), name="Δ Sharpe")
+
+    # Optional context lines if present
+    if "sharpe_low_state" in th_run.columns:
+        fig.add_trace(go.Scatter(
+            x=th_run["tau"], y=th_run["sharpe_low_state"],
+            mode="lines", name="Sharpe (Low Vol Regime)",
+            line=dict(color="royalblue", width=1, dash="dot"),
+            opacity=0.6,
+        ))
+    if "sharpe_high_state" in th_run.columns:
+        fig.add_trace(go.Scatter(
+            x=th_run["tau"], y=th_run["sharpe_high_state"],
+            mode="lines", name="Sharpe (High Vol Regime)",
+            line=dict(color="firebrick", width=1, dash="dot"),
+            opacity=0.6,
+        ))
+
+    fig.add_vline(
+        x=tau_star,
+        line_width=3,
+        line_dash="dash",
+        line_color="black",
+        annotation_text="τ*",  
+        annotation_position="top",
+        annotation=dict(
+            font=dict(size=14, color="black"),
+            bgcolor="rgba(255,255,255,0.8)",
+            bordercolor="black",
+            borderwidth=1,
+        ),
+    )
+
+    fig.update_layout(
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+        margin=dict(l=60, r=20, t=40, b=50),
+    )
+    return fig
+
+
+def plot_rv_vs_returns(ret_run: pd.DataFrame, *, rv_col: str, ret_col: str, tau_star: float) -> go.Figure:
+    """
+    Scatter: RV on x, returns on y.
+    Color dots by split column (e.g., 'train' vs 'test' or 'selection' vs 'evaluation').
+    """
+    x = ret_run.copy()
+
+    # If returns are in long format (series/value), pivot to wide first
+    if {"series", "value"}.issubset(x.columns):
+        wide = (
+            x.pivot_table(index=["timestamp", "split"], columns="series", values="value", aggfunc="first")
+             .reset_index()
+        )
+        x = wide
+
+    need = {"split", rv_col, ret_col}
+    missing = [c for c in need if c not in x.columns]
+    if missing:
+        fig = go.Figure()
+        fig.add_annotation(
+            text=f"Missing columns for RV vs Returns plot: {missing}",
+            xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False
+        )
+        fig.update_layout(template="simple_white")
+        return fig
+
+    # Make sure split is string for legend grouping
+    x["split"] = x["split"].astype(str)
+
+    fig = px.scatter(
+        x,
+        x=rv_col,
+        y=ret_col,
+        color="split",
+        opacity=0.7,
+        template="simple_white",
+        labels={rv_col: "Realized Volatility", ret_col: "Daily Returns XLE"},
+    )
+
+    fig.add_vline(
+        x=tau_star,
+        line_width=3,
+        line_dash="dash",
+        line_color="black",
+        annotation_text="τ*",  # MathJax-safe
+        annotation_position="top",
+        annotation=dict(
+            font=dict(size=14, color="black"),
+            bgcolor="rgba(255,255,255,0.8)",
+            bordercolor="black",
+            borderwidth=1,
+        ),
+    )
+    # --- append mean return to the existing legend labels ---
+    means = x.groupby("split")[ret_col].mean().to_dict()
+
+    fig.for_each_trace(
+        lambda tr: tr.update(
+            name=f"{tr.name} (mean={means.get(tr.name, float('nan')):.3g})",
+            legendgroup=f"{tr.name} (mean={means.get(tr.name, float('nan')):.3g})",
+        )
+        if tr.name in means else None
+    )
+   
+
+    
+    fig.update_traces(marker=dict(size=6))
+    fig.update_layout(margin=dict(l=60, r=20, t=40, b=50))
+    return fig
+
+
+
+def make_app(runs_summary: pd.DataFrame, equity_curves: pd.DataFrame, thresholds: pd.DataFrame, returns: pd.DataFrame):
     rs = runs_summary.copy()
 
     # ---- checks ----
@@ -55,12 +178,21 @@ def make_app(runs_summary: pd.DataFrame, equity_curves: pd.DataFrame, thresholds
         for (rid, strat), g in ec.groupby(["run_id", "strategy"], sort=False)
     }
 
-    TH_MAP = None
-    if thresholds is not None:
-        th = thresholds.copy()
-        if "run_id" not in th.columns:
-            raise ValueError("thresholds must contain 'run_id'")
+
+    TH_MAP = None 
+    if thresholds is not None: 
+        th = thresholds.copy() 
+        if "run_id" not in th.columns: 
+            raise ValueError("thresholds must contain 'run_id'") 
         TH_MAP = {rid: g for rid, g in th.groupby("run_id", sort=False)}
+
+    ret = returns.copy()
+    if "run_id" not in ret.columns:
+        raise ValueError("returns must contain 'run_id'")
+    if "timestamp" in ret.columns:
+        ret["timestamp"] = pd.to_datetime(ret["timestamp"])
+    RETURNS_MAP = {rid: g.sort_values("timestamp") for rid, g in ret.groupby("run_id", sort=False)}
+
 
     # labels
     if "run_label" not in rs.columns:
@@ -89,7 +221,7 @@ def make_app(runs_summary: pd.DataFrame, equity_curves: pd.DataFrame, thresholds
     app.layout = html.Div(
     style={"fontFamily": "system-ui", "padding": "16px", "background": "#f6f7fb"},
     children=[
-        html.H2("Sweep Dashboard", style={"margin": "0 0 10px 0"}),
+        html.H2("Tau Sensitivity Dashboard", style={"margin": "0 0 10px 0"}),
 
         html.Div(
             style={
@@ -180,7 +312,7 @@ def make_app(runs_summary: pd.DataFrame, equity_curves: pd.DataFrame, thresholds
                                 "display": "grid",
                                 "gridTemplateColumns": "1fr 420px",
                                 "gap": "12px",
-                                "minWidth": 0,     # ✅ allow inner grid to shrink
+                                "minWidth": 0,     
                             },
                             children=[
                                 html.Div(
@@ -189,7 +321,7 @@ def make_app(runs_summary: pd.DataFrame, equity_curves: pd.DataFrame, thresholds
                                         "borderRadius": "12px",
                                         "padding": "12px",
                                         "border": "1px solid #e6e6e6",
-                                        "minWidth": 0,  # ✅ critical: this card must be shrinkable
+                                        "minWidth": 0,  
                                     },
                                     children=[
                                         html.Div("Equity Curve", style={"fontWeight": 700, "marginBottom": "6px"}),
@@ -233,13 +365,46 @@ def make_app(runs_summary: pd.DataFrame, equity_curves: pd.DataFrame, thresholds
                             },
                             children=[
                                 html.Div("τ Diagnostics", style={"fontWeight": 700, "marginBottom": "6px"}),
-                                dcc.Graph(
-                                    id="tau-fig",
-                                    config={"displayModeBar": False, "responsive": True},
-                                    style={"width": "100%", "minWidth": 0, "height": "320px"},
+
+                                # ROW: two plots side-by-side
+                                html.Div(
+                                    style={"display": "flex", "gap": "12px"},
+                                    children=[
+                                        # LEFT
+                                        html.Div(
+                                            style={"flex": 1, "minWidth": 0},
+                                            children=[
+                                                dcc.Graph(
+                                                    id="tau-fig",
+                                                    config={"displayModeBar": False, "responsive": True},
+                                                    style={"height": "320px"},
+                                                ),
+                                                html.Div(
+                                                    id="tau-help",
+                                                    style={"fontSize": "12px", "color": "#666", "marginTop": "6px"},
+                                                ),
+                                            ],
+                                        ),
+
+                                        # RIGHT
+                                        html.Div(
+                                            style={"flex": 1, "minWidth": 0},
+                                            children=[
+                                                dcc.Graph(
+                                                    id="eval-test",
+                                                    config={"displayModeBar": False, "responsive": True},
+                                                    style={"height": "320px"},
+                                                ),
+                                                html.Div(
+                                                    id="eval-help",
+                                                    style={"fontSize": "12px", "color": "#666", "marginTop": "6px"},
+                                                ),
+                                            ],
+                                        ),
+                                    ],
                                 ),
-                                html.Div(id="tau-help", style={"fontSize": "12px", "color": "#666", "marginTop": "6px"}),
-                            ],
+                        ]
+
                         ),
                     ],
                 ),
@@ -337,6 +502,8 @@ def make_app(runs_summary: pd.DataFrame, equity_curves: pd.DataFrame, thresholds
         Output("stats-table", "data"),
         Output("tau-fig", "figure"),
         Output("tau-help", "children"),
+        Output("eval-test", "figure"),
+        Output("eval-help", "children"),
         Input("run-dd", "value"),
         Input("strategy-radio", "value"),
         prevent_initial_call=False,)
@@ -389,31 +556,31 @@ def make_app(runs_summary: pd.DataFrame, equity_curves: pd.DataFrame, thresholds
         stats_cols = [c for c in stats_cols if c in rs.columns]
         stats = [{"metric": c, "value": str(row.get(c))} for c in stats_cols]
 
-        # tau plot
-        if TH_MAP is None:
-            tau_fig = px.line(title="No thresholds table provided.")
-            tau_help = "No thresholds loaded."
-        else:
+
+       # defaults
+        tau_fig = empty_fig
+        tau_help = "No τ diagnostics."
+        rv_ret_fig = empty_fig
+        rv_ret_help = "No RV vs returns data."
+
+        # --- τ diagnostics + train-vs-eval τ plot ---
+        if TH_MAP is not None:
             th_run = TH_MAP.get(run_id)
-            if th_run is None or th_run.empty:
-                tau_fig = px.line(title="No τ diagnostics for this run.")
-                tau_help = "No thresholds rows for this run."
-            else:
-                if ("tau" in th_run.columns) and ("score" in th_run.columns):
-                    th_run = th_run.sort_values("tau")
-                    tau_fig = px.line(th_run, x="tau", y="score")
-                    if pd.notna(tau_star):
-                        tau_fig.add_vline(x=float(tau_star), line_dash="dash")
-                    tau_help = "Line = score over τ grid; dashed line = τ*."
-                elif "tau" in th_run.columns:
-                    tau_fig = px.histogram(th_run, x="tau", nbins=30)
-                    if pd.notna(tau_star):
-                        tau_fig.add_vline(x=float(tau_star), line_dash="dash")
-                    tau_help = "Histogram = τ values; dashed line = τ*."
-                else:
-                    tau_fig = px.line(title="thresholds needs a 'tau' column.")
-                    tau_help = "Add a 'tau' column (and optionally 'score')."
-                tau_fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), xaxis_title="τ")
+            if th_run is not None and not th_run.empty and "tau" in th_run.columns:
+                tau_fig = plot_tau_diagnostics(th_run, tau_star)
+                tau_help = "ΔSharpe over τ grid; dashed line is $\\tau^*$."
+
+                eval_test = plot_tau_diagnostics(th_run, tau_star)
+                eval_help = "Selection vs evaluation objective over τ (generalization check)."
+
+        # --- RV vs Returns scatter ---
+        ret_run = RETURNS_MAP.get(run_id)
+        if ret_run is not None and not ret_run.empty:
+            # choose columns you want; adjust these two names
+            rv_col = "rvol_o2c"          # or "state_var" if that's what you're storing
+            ret_col = f"ret_{prefix.replace('2', '')}"           # or "ret_oc" depending on what you want to show
+            rv_ret_fig = plot_rv_vs_returns(ret_run, rv_col=rv_col, ret_col=ret_col, tau_star=tau_star)
+            rv_ret_help = f"Scatter of {ret_col} vs {rv_col}. Color = split."
 
         # IMPORTANT: exactly 9 outputs returned
         return (
@@ -426,6 +593,8 @@ def make_app(runs_summary: pd.DataFrame, equity_curves: pd.DataFrame, thresholds
             stats,
             tau_fig,
             tau_help,
+            rv_ret_fig, 
+            rv_ret_help,
         )
 
 

@@ -18,8 +18,9 @@ def create_app() -> Dash:
     runs_summary = pd.read_parquet('results/xle_rv_sweep/runs_summary.parquet')
     equity_curves = pd.read_parquet('results/xle_rv_sweep/equity_curves.parquet')
     thresholds = pd.read_parquet('results/xle_rv_sweep/thresholds.parquet')
+    returns = pd.read_parquet('results/xle_rv_sweep/returns.parquet')
 
-    app = make_app(runs_summary, equity_curves, thresholds)
+    app = make_app(runs_summary, equity_curves, thresholds, returns)
     return app
 
 
