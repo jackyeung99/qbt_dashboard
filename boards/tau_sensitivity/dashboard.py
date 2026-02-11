@@ -28,6 +28,7 @@ def build_dashboard(ctx):
     if "run_label" not in rs.columns:
         rs["run_label"] = rs.apply(build_pretty_label, axis=1)
 
+
     param_cols = [
         "intraday_freq", "cutoff", "selection_years", "grid_size", "rf",
         "transaction_cost", "tau_quantile_bounds",

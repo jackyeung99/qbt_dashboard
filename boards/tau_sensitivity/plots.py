@@ -3,6 +3,77 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 
+from .queries import load_equity_all
+
+
+def plot_equity(run_id: str, strategy: str) -> go.Figure:
+    df = load_equity_all()
+    fig = go.Figure()
+
+
+
+    g = df[(df["run_id"] == run_id) & (df["strategy"].astype(str) == f"bh_{strategy}")]
+    if not g.empty:
+        fig.add_trace(go.Scatter(x=g["timestamp"], y=g["equity"], mode="lines",
+                                    name="Buy & Hold", line=dict(color="gray", dash="dash")))
+
+    s = df[(df["run_id"] == run_id) & (df["strategy"].astype(str) == strategy)]
+    if not s.empty and strategy != "bh":
+        fig.add_trace(go.Scatter(x=s["timestamp"], y=s["equity"], mode="lines",
+                                    name=strategy.upper(), line=dict(color= 'blue', width=3)))
+        
+        # --- FULL-HEIGHT TURNOVER BARS ---
+        shapes = []
+        s2 = s.sort_values("timestamp").copy()
+        sig_prev = s2["signal_t"].shift(1)
+
+        # flip events
+        flip_up = (sig_prev == 0) & (s2["signal_t"] == 1)
+        flip_dn = (sig_prev == 1) & (s2["signal_t"] == 0)
+
+        # (optional) also require meaningful turnover to avoid noise
+        eps = 1e-8
+        flip_up &= (s2["turnover"].fillna(0) > eps)
+        flip_dn &= (s2["turnover"].fillna(0) > eps)
+
+        for ts in s2.loc[flip_up, "timestamp"]:
+            shapes.append(
+                dict(
+                    type="line",
+                    opacity=0.5,
+                    x0=ts, x1=ts,
+                    y0=0, y1=1,
+                    xref="x", yref="paper",
+                    line=dict(width=2, color="green"),
+                    
+                )
+            )
+
+        for ts in s2.loc[flip_dn, "timestamp"]:
+            shapes.append(
+                dict(
+                    type="line",
+                    opacity=0.5,
+                    x0=ts, x1=ts,
+                    y0=0, y1=1,
+                    xref="x", yref="paper",
+                    line=dict(width=2, color="red"),
+                )
+            )
+        fig.update_layout(shapes=shapes)
+
+    if len(fig.data) == 0:
+        fig.add_annotation(text="No equity data", xref="paper", yref="paper",
+                            x=0.5, y=0.5, showarrow=False)
+
+    fig.update_layout(
+        margin=dict(l=10, r=10, t=10, b=10),
+        yaxis_title="Equity",
+        legend=dict(orientation="h", y=1.02, yanchor="bottom"),
+    )
+    return fig
+
+
 
 def plot_tau_diagnostics(th_run: pd.DataFrame, tau_star: float) -> go.Figure:
     th_run = th_run.sort_values("tau").copy()

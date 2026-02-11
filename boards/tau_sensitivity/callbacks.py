@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 from dash import Dash, Input, Output, callback
 
 from .queries import load_equity_all, load_returns_all
-from .plots import plot_tau_diagnostics, plot_rv_vs_returns  # or move these to plots.py
+from .plots import plot_tau_diagnostics, plot_rv_vs_returns, plot_equity  # or move these to plots.py
 
 
 def register_callbacks(
@@ -53,30 +53,6 @@ def register_callbacks(
         default_val = opts[0]["value"] if opts else None
         return opts, default_val, f"{len(dff)} run(s) in list (capped to 500)."
 
-    def plot_equity(run_id: str, strategy: str) -> go.Figure:
-        df = load_equity_all()
-        fig = go.Figure()
-
-        g = df[(df["run_id"] == run_id) & (df["strategy"].astype(str) == "bh")]
-        if not g.empty:
-            fig.add_trace(go.Scatter(x=g["timestamp"], y=g["equity"], mode="lines",
-                                     name="Buy & Hold", line=dict(color="gray", dash="dash")))
-
-        s = df[(df["run_id"] == run_id) & (df["strategy"].astype(str) == strategy)]
-        if not s.empty and strategy != "bh":
-            fig.add_trace(go.Scatter(x=s["timestamp"], y=s["equity"], mode="lines",
-                                     name=strategy.upper(), line=dict(width=3)))
-
-        if len(fig.data) == 0:
-            fig.add_annotation(text="No equity data", xref="paper", yref="paper",
-                               x=0.5, y=0.5, showarrow=False)
-
-        fig.update_layout(
-            margin=dict(l=10, r=10, t=10, b=10),
-            yaxis_title="Equity",
-            legend=dict(orientation="h", y=1.02, yanchor="bottom"),
-        )
-        return fig
 
     @callback(
         Output("equity-fig", "figure"),
@@ -107,7 +83,7 @@ def register_callbacks(
 
         eq_fig = plot_equity(run_id, strategy)
 
-        prefix = {"c2c": "c2c", "o2c": "o2c", "bh": "bh"}.get(strategy, "c2c")
+        prefix = {"c2c": "c2c", "o2c": "o2c"}.get(strategy, "c2c")
         sharpe = row.get(f"{prefix}_sharpe", None)
         cumret = row.get(f"{prefix}_cumulative_return", None)
         mdd = row.get(f"{prefix}_max_drawdown", None)

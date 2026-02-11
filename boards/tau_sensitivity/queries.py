@@ -25,7 +25,7 @@ def load_equity_all() -> pd.DataFrame:
     """Load ALL equity curves once per worker."""
     df = pd.read_parquet(
         RESULTS / "equity_curves.parquet",
-        columns=["run_id", "strategy", "timestamp", "equity"],
+        # columns=["run_id", "strategy", "timestamp", "equity", "turnover"],
     )
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     df["run_id"] = df["run_id"].astype("category")
