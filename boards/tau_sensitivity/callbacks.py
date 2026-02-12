@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 from dash import Dash, Input, Output, callback
 
 from .queries import load_equity_all, load_returns_all
-from .plots import plot_tau_diagnostics, plot_rv_vs_returns, plot_equity  # or move these to plots.py
+from .plots import plot_tau_diagnostics, plot_rv_vs_returns, plot_equity, plot_equity_animated  # or move these to plots.py
 
 
 def register_callbacks(
@@ -81,7 +81,7 @@ def register_callbacks(
             return empty_fig, "-", "-", "-", "-", "-", [], empty_fig, "Run not found.", empty_fig, "Run not found."
         row = row_df.iloc[0]
 
-        eq_fig = plot_equity(run_id, strategy)
+        eq_fig = plot_equity_animated(run_id, strategy)
 
         prefix = {"c2c": "c2c", "o2c": "o2c"}.get(strategy, "c2c")
         sharpe = row.get(f"{prefix}_sharpe", None)

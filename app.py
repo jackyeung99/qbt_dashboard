@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 
 from dash import Dash, html
 
@@ -15,23 +14,15 @@ except Exception:
     from registry import discover_dashboards, build_specs_with_ctx  # type: ignore
 
 
-@dataclass
 class AppContext:
-    env: str = "dev"
-    results_root: str = "results"  # optional: pass into dashboards via ctx later
+    def __init__(self, env: str = "dev", results_root: str = "results"):
+        self.env = env
+        self.results_root = results_root
 
 
-def _get_dashboard_key() -> str:
-    """
-    Single dashboard runner.
-    Set DASHBOARD=tau_sensitivity (or another folder name under boards/)
-    """
-    # sensible default so dev doesn't crash
-    return (os.getenv("DASHBOARD") or "tau_sensitivity").strip()
 
-
-def create_app(ctx: AppContext) -> Dash:
-    key = _get_dashboard_key()
+def create_app(ctx: AppContext, dashboard) -> Dash:
+    key = dashboard
 
     discovered = discover_dashboards(enabled_keys=[key])
     specs = build_specs_with_ctx(discovered, ctx)
@@ -68,8 +59,11 @@ def create_app(ctx: AppContext) -> Dash:
     return app
 
 
-ctx = AppContext(env=os.getenv("APP_ENV", "dev"), results_root=os.getenv("RESULTS_ROOT", "results"))
-app = create_app(ctx)
+ctx = AppContext(
+    env=os.getenv("APP_ENV", "dev"),
+    results_root=os.getenv("RESULTS_ROOT", "results")
+)
+app = create_app(ctx, dashboard='state_variables')
 server = app.server
 
 if __name__ == "__main__":

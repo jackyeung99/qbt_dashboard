@@ -6,6 +6,233 @@ import plotly.graph_objects as go
 from .queries import load_equity_all
 
 
+def plot_equity_animated(run_id: str, strategy: str) -> go.Figure:
+    df = load_equity_all()
+
+    # --- slice buy&hold + strategy ---
+    g = df[(df["run_id"] == run_id) & (df["strategy"].astype(str) == f"bh_{strategy}")].copy()
+    s = df[(df["run_id"] == run_id) & (df["strategy"].astype(str) == strategy)].copy()
+
+    all_eq = pd.concat(
+    [
+        g[["timestamp", "equity"]] if not g.empty else pd.DataFrame(),
+        s[["timestamp", "equity"]] if not s.empty else pd.DataFrame(),
+    ]
+    )
+
+    xmin = all_eq["timestamp"].min()
+    xmax = all_eq["timestamp"].max()
+    ymin = all_eq["equity"].min()
+    ymax = all_eq["equity"].max()
+
+    # small padding so lines don't hug edges
+    ypad = 0.02 * (ymax - ymin)
+    ymin -= ypad
+    ymax += ypad
+
+    fig = go.Figure()
+
+    if g.empty and s.empty:
+        fig.add_annotation(text="No equity data", xref="paper", yref="paper",
+                           x=0.5, y=0.5, showarrow=False)
+        fig.update_layout(margin=dict(l=10, r=10, t=10, b=10))
+        return fig
+
+    # sort + unique timeline (use strategy timeline as driver if available)
+    if not s.empty:
+        s = s.sort_values("timestamp")
+        timeline = s["timestamp"].dropna().unique()
+    else:
+        g = g.sort_values("timestamp")
+        timeline = g["timestamp"].dropna().unique()
+
+    # ---- base traces (start with first point only) ----
+    # Buy & Hold (gray dashed)
+    if not g.empty:
+        g = g.sort_values("timestamp")
+        fig.add_trace(
+            go.Scatter(
+                x=[g["timestamp"].iloc[0]],
+                y=[g["equity"].iloc[0]],
+                mode="lines",
+                name="Buy & Hold",
+                line=dict(color="gray", dash="dash"),
+            )
+        )
+    else:
+        # placeholder so trace indices stay consistent
+        fig.add_trace(go.Scatter(x=[], y=[], mode="lines",
+                                 name="Buy & Hold",
+                                 line=dict(color="gray", dash="dash")))
+
+    # Strategy (black)
+    if not s.empty and strategy != "bh":
+        fig.add_trace(
+            go.Scatter(
+                x=[s["timestamp"].iloc[0]],
+                y=[s["equity"].iloc[0]],
+                mode="lines",
+                name=strategy.upper(),
+                line=dict(color="black", width=3),
+            )
+        )
+    else:
+        fig.add_trace(go.Scatter(x=[], y=[], mode="lines",
+                                 name=strategy.upper(),
+                                 line=dict(color="black", width=3)))
+
+    # ---- turnover flip logic (precompute) ----
+    shapes_all = []
+    if not s.empty and strategy != "bh" and {"signal_t", "turnover"}.issubset(s.columns):
+        s2 = s.copy()
+        sig_prev = s2["signal_t"].shift(1)
+
+        flip_up = (sig_prev == 0) & (s2["signal_t"] == 1)
+        flip_dn = (sig_prev == 1) & (s2["signal_t"] == 0)
+
+        eps = 1e-8
+        flip_up &= (s2["turnover"].fillna(0) > eps)
+        flip_dn &= (s2["turnover"].fillna(0) > eps)
+
+        for ts in s2.loc[flip_up, "timestamp"]:
+            shapes_all.append(
+                dict(
+                    type="line",
+                    opacity=0.2,
+                    x0=ts, x1=ts,
+                    y0=0, y1=1,
+                    xref="x", yref="paper",
+                    line=dict(width=2, color="green"),
+                )
+            )
+        for ts in s2.loc[flip_dn, "timestamp"]:
+            shapes_all.append(
+                dict(
+                    type="line",
+                    opacity=0.2,
+                    x0=ts, x1=ts,
+                    y0=0, y1=1,
+                    xref="x", yref="paper",
+                    line=dict(width=2, color="red"),
+                )
+            )
+
+    # helper: shapes revealed up to current timestamp
+    def shapes_upto(t):
+        if not shapes_all:
+            return []
+        out = []
+        for sh in shapes_all:
+            # x0 is the event day
+            if sh["x0"] <= t:
+                out.append(sh)
+        return out
+
+    # ---- build frames: reveal data up to each day ----
+    frames = []
+    for i, t in enumerate(timeline):
+        # buy&hold partial
+        if not g.empty:
+            gg = g[g["timestamp"] <= t]
+            xg, yg = gg["timestamp"], gg["equity"]
+        else:
+            xg, yg = [], []
+
+        # strategy partial
+        if not s.empty and strategy != "bh":
+            ss = s[s["timestamp"] <= t]
+            xs, ys = ss["timestamp"], ss["equity"]
+        else:
+            xs, ys = [], []
+
+        frames.append(
+            go.Frame(
+                name=str(i),
+                data=[
+                    go.Scatter(x=xg, y=yg),  # trace 0
+                    go.Scatter(x=xs, y=ys),  # trace 1
+                ],
+                layout=go.Layout(shapes=shapes_upto(t)),
+            )
+        )
+
+    fig.frames = frames
+
+    # ---- animation controls ----
+    # step per day; tune frame duration to taste
+    frame_ms = 40
+    transition_ms = 0
+
+    fig.update_layout(
+        xaxis=dict(range=[xmin, xmax], autorange=False),
+        yaxis=dict(range=[ymin, ymax], autorange=False),
+        updatemenus=[
+            dict(
+                type="buttons",
+                direction="left",
+                x=0.0,
+                y=1.15,
+                showactive=False,
+                buttons=[
+                    dict(
+                        label="Play",
+                        method="animate",
+                        args=[
+                            None,
+                            dict(
+                                frame=dict(duration=frame_ms, redraw=True),
+                                transition=dict(duration=transition_ms),
+                                fromcurrent=True,
+                                mode="immediate",
+                            ),
+                        ],
+                    ),
+                    dict(
+                        label="Pause",
+                        method="animate",
+                        args=[
+                            [None],
+                            dict(
+                                frame=dict(duration=0, redraw=False),
+                                transition=dict(duration=0),
+                                mode="immediate",
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        ],
+        sliders=[
+            dict(
+                x=0.0,
+                y=1.08,
+                len=1.0,
+                pad=dict(t=10, b=0),
+                steps=[
+                    dict(
+                        method="animate",
+                        label=str(t)[:10],  # e.g. '2025-01-15'
+                        args=[
+                            [str(i)],
+                            dict(
+                                frame=dict(duration=0, redraw=True),
+                                transition=dict(duration=0),
+                                mode="immediate",
+                            ),
+                        ],
+                    )
+                    for i, t in enumerate(timeline)
+                ],
+            )
+        ],
+        margin=dict(l=10, r=10, t=10, b=10),
+        yaxis_title="Equity",
+        legend=dict(orientation="h", y=1.02, yanchor="bottom"),
+    )
+
+    return fig
+
+
 def plot_equity(run_id: str, strategy: str) -> go.Figure:
     df = load_equity_all()
     fig = go.Figure()
@@ -20,7 +247,7 @@ def plot_equity(run_id: str, strategy: str) -> go.Figure:
     s = df[(df["run_id"] == run_id) & (df["strategy"].astype(str) == strategy)]
     if not s.empty and strategy != "bh":
         fig.add_trace(go.Scatter(x=s["timestamp"], y=s["equity"], mode="lines",
-                                    name=strategy.upper(), line=dict(color= 'blue', width=3)))
+                                    name=strategy.upper(), line=dict(color= 'black', width=3)))
         
         # --- FULL-HEIGHT TURNOVER BARS ---
         shapes = []
@@ -40,7 +267,7 @@ def plot_equity(run_id: str, strategy: str) -> go.Figure:
             shapes.append(
                 dict(
                     type="line",
-                    opacity=0.5,
+                    opacity=0.2,
                     x0=ts, x1=ts,
                     y0=0, y1=1,
                     xref="x", yref="paper",
@@ -53,7 +280,7 @@ def plot_equity(run_id: str, strategy: str) -> go.Figure:
             shapes.append(
                 dict(
                     type="line",
-                    opacity=0.5,
+                    opacity=0.2,
                     x0=ts, x1=ts,
                     y0=0, y1=1,
                     xref="x", yref="paper",

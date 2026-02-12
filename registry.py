@@ -1,52 +1,33 @@
-# registry.py
+# src/dashboards/registry.py
 from __future__ import annotations
 
 import importlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Protocol, Union
+from typing import Callable, Dict, List, Optional
 
 import yaml
 from dash import Dash
 from dash.development.base_component import Component
 
 
-# ---- contracts --------------------------------------------------------------
-
-class DashboardBuilder(Protocol):
-    def __call__(self, ctx) -> Union["DashboardSpec", dict]: ...
-
-
-@dataclass(frozen=True)
+@dataclass()
 class DashboardSpec:
-    """Fully-built dashboard plugin spec."""
-    key: str
-    title: str
-    route: str
+    """Single dashboard plugin spec."""
+    key: str                 # folder name, e.g. "energy_overview"
+    title: str               # display name
+    route: str               # URL path, e.g. "/energy"
     description: str = ""
     tags: List[str] = None
 
+    # factories
     layout: Callable[[], Component] = None
     register_callbacks: Callable[[Dash], None] = None
 
+    # optional settings
     order: int = 100
     enabled: bool = True
 
-
-@dataclass(frozen=True)
-class DiscoveredDashboard:
-    """Discovered dashboard with builder attached (ctx not applied yet)."""
-    key: str
-    title: str
-    route: str
-    description: str
-    tags: List[str]
-    order: int
-    enabled: bool
-    builder: DashboardBuilder
-
-
-# ---- helpers ----------------------------------------------------------------
 
 def _load_yaml(path: Path) -> dict:
     return yaml.safe_load(path.read_text()) or {}
@@ -57,63 +38,43 @@ def _normalize_route(route: str) -> str:
         return "/"
     if not route.startswith("/"):
         route = "/" + route
+    # no trailing slash except root
     if route != "/" and route.endswith("/"):
         route = route[:-1]
     return route
 
 
-def _default_boards_dir() -> Path:
-    # registry.py is in repo root / dashboards root, boards/ is sibling
-    return Path(__file__).resolve().parent / "boards"
-
-
-def _resolve_package_base(package_base: Optional[str]) -> str:
-    """
-    Handles running as script vs module.
-
-    If you run `python app.py` from this folder, importing `boards.*` works.
-    If you run as a package (e.g. `python -m dashboards.app`), you likely want
-    `dashboards.boards.*`.
-    """
-    if package_base:
-        return package_base
-
-    # Heuristic: if this file is part of a package import, __package__ will be non-empty.
-    # If registry is imported as `dashboards.registry`, __package__ is "dashboards".
-    pkg = __package__ or ""
-    if pkg:
-        return f"{pkg}.boards"
-    return "boards"
-
-
-# ---- public API -------------------------------------------------------------
-
 def discover_dashboards(
     *,
-    package_base: Optional[str] = None,
+    package_base: str = "boards",
     boards_dir: Optional[Path] = None,
     enabled_keys: Optional[List[str]] = None,
-) -> List[DiscoveredDashboard]:
+) -> List[DashboardSpec]:
     """
     Auto-discover dashboards under boards/*.
 
     Each dashboard folder must contain:
       - meta.yaml
-      - dashboard.py (must define build_dashboard(ctx))
+      - dashboard.py  (must expose build_dashboard(ctx) -> DashboardSpec-like fields)
 
     enabled_keys:
-      - None -> discover all
-      - list -> only those keys
+      - None -> load all
+      - list -> only load those dashboard folder names
     """
-    boards_dir = boards_dir or _default_boards_dir()
-    pkg_base = _resolve_package_base(package_base)
+    if boards_dir is None:
+        boards_dir = Path(__file__).resolve().parent / "boards"
 
-    out: List[DiscoveredDashboard] = []
+    specs: List[DashboardSpec] = []
 
     for d in sorted([p for p in boards_dir.iterdir() if p.is_dir()]):
+        
+        # print(d)
+       
         key = d.name
         if enabled_keys is not None and key not in enabled_keys:
             continue
+
+ 
 
         meta_path = d / "meta.yaml"
         dash_py = d / "dashboard.py"
@@ -130,15 +91,22 @@ def discover_dashboards(
         tags = list(meta.get("tags", []) or [])
         order = int(meta.get("order", 100))
 
-        module_path = f"{pkg_base}.{key}.dashboard"
+        module_path = f"{package_base}.{key}.dashboard"
         mod = importlib.import_module(module_path)
 
-        builder = getattr(mod, "build_dashboard", None)
-        if builder is None or not callable(builder):
-            raise ValueError(f"{module_path} must define a callable build_dashboard(ctx).")
 
-        out.append(
-            DiscoveredDashboard(
+        if not hasattr(mod, "build_dashboard"):
+            raise ValueError(f"{module_path} must define build_dashboard(ctx).")
+      
+
+        # build_dashboard should return an object/dict with layout + register_callbacks.
+        # We keep it flexible: allow dict or DashboardSpec.
+        built = mod.build_dashboard  # function handle; called later with ctx
+
+
+        # We store a "lazy" spec; ctx is not known at discovery time.
+        specs.append(
+            DashboardSpec(
                 key=key,
                 title=title,
                 route=route,
@@ -146,54 +114,53 @@ def discover_dashboards(
                 tags=tags,
                 order=order,
                 enabled=True,
-                builder=builder,
+                # placeholders; app.py will replace these by calling build_dashboard(ctx)
+                layout=lambda: None,  # type: ignore
+                register_callbacks=lambda app: None,  # type: ignore
             )
         )
 
-    out.sort(key=lambda s: (s.order, s.title.lower()))
-    return out
+        # Attach the builder on the spec (private attribute) for later use
+        setattr(specs[-1], "_builder", built)  # type: ignore[attr-defined]
+
+    # sort by order then title
+    specs.sort(key=lambda s: (s.order, s.title.lower()))
+    return specs
 
 
-def build_specs_with_ctx(discovered: List[DiscoveredDashboard], ctx) -> List[DashboardSpec]:
+def build_specs_with_ctx(specs: List[DashboardSpec], ctx) -> List[DashboardSpec]:
     """
-    Materialize discovered dashboards into fully-built DashboardSpec by calling build_dashboard(ctx).
+    Convert 'lazy' discovered specs into full specs by calling each dashboard's build_dashboard(ctx).
     """
     full: List[DashboardSpec] = []
+    for s in specs:
+        builder = getattr(s, "_builder", None)
+        if builder is None:
+            continue
 
-    for d in discovered:
-        built = d.builder(ctx)
+        built = builder(ctx)
 
+        # allow dict return
         if isinstance(built, dict):
-            layout_fn = built.get("layout")
-            cb_fn = built.get("register_callbacks")
-            title = built.get("title", d.title)
-            route = _normalize_route(built.get("route", d.route))
+            layout_fn = built["layout"]
+            cb_fn = built["register_callbacks"]
         else:
             layout_fn = built.layout
             cb_fn = built.register_callbacks
-            title = getattr(built, "title", d.title)
-            route = _normalize_route(getattr(built, "route", d.route))
-
-        if layout_fn is None:
-            raise ValueError(f"Dashboard '{d.key}' build_dashboard(ctx) did not provide a layout().")
-        if cb_fn is None:
-            # allow dashboards with no callbacks
-            cb_fn = lambda app: None
 
         full.append(
             DashboardSpec(
-                key=d.key,
-                title=title,
-                route=route,
-                description=d.description,
-                tags=d.tags,
-                order=d.order,
-                enabled=d.enabled,
+                key=s.key,
+                title=getattr(built, "title", s.title) if not isinstance(built, dict) else built.get("title", s.title),
+                route=getattr(built, "route", s.route) if not isinstance(built, dict) else built.get("route", s.route),
+                description=s.description,
+                tags=s.tags,
+                order=s.order,
+                enabled=s.enabled,
                 layout=layout_fn,
                 register_callbacks=cb_fn,
             )
         )
-
     return full
 
 
