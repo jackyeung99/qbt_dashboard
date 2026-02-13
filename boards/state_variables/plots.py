@@ -25,8 +25,7 @@ def plot_rv_tau_weights_returns_equity_animated(
     *,
     run_id: str | None = None,
     frame_ms: int = 200,
-    every: int = 5,
-    add_cursor: bool = False ,
+    every: int = 1,
     returns_as_bars: bool = True,   # bars stutter more when x-range animates
     use_webgl: bool = True,          # Scattergl smoother for long series
     lock_xticks: bool = True,        # reduces perceived "wobble" from tick recompute
@@ -107,7 +106,7 @@ def plot_rv_tau_weights_returns_equity_animated(
         shared_xaxes=True,
         vertical_spacing=0.06,
         row_heights=[0.42, 0.2, 0.18, 0.3],
-        subplot_titles=("Equity", "Returns", "Weights / Exposure", "State Variable & Threshold"),
+        subplot_titles=("XLE Volatility Regime Timing Strategy", "Returns", "Weights / Exposure", "State Variable & Threshold"),
     )
 
     for a in fig.layout.annotations:
@@ -333,103 +332,121 @@ def plot_rv_tau_weights_returns_equity_animated(
     #     fig.update_layout(shapes=list(fig.layout.shapes) + shapes_turnover if fig.layout.shapes else shapes_turnover)
    
     if "signal" in df.columns:
-        sig = pd.to_numeric(df["signal"], errors="coerce")
+        sig = pd.to_numeric(df["signal"], errors="coerce").ffill()
 
-        long_regions = []
-        sell_regions = []
+        # keep only 0/1
+        sig = sig.where(sig.isin([0, 1]))
+        if sig.notna().any():
+            shapes = []
 
-        start = None
-        current_regime = None
+            start = df["timestamp"].iloc[0]
+            prev = int(sig.iloc[0]) if pd.notna(sig.iloc[0]) else None
 
-        for ts, s in zip(df["timestamp"], sig):
-            if s != current_regime:
-                if start is not None:
-                    if current_regime == 1:
-                        long_regions.append((start, prev_ts))
-                    elif current_regime == 0:
-                        sell_regions.append((start, prev_ts))
-                start = ts
-                current_regime = s
-            prev_ts = ts
+            for ts, s in zip(df["timestamp"].iloc[1:], sig.iloc[1:]):
+                if pd.isna(s):
+                    continue
+                s = int(s)
 
-        # close last regime
-        if start is not None:
-            if current_regime == 1:
-                long_regions.append((start, df["timestamp"].iloc[-1]))
-            elif current_regime == 0:
-                sell_regions.append((start, df["timestamp"].iloc[-1]))
+                # regime change → close previous segment
+                if prev is not None and s != prev:
+                    fill = "rgba(34,197,94,0.08)" if prev == 1 else "rgba(239,68,68,0.08)"  # green/red
+                    shapes.append(
+                        dict(
+                            type="rect",
+                            xref="x",
+                            yref="paper",
+                            x0=start,
+                            x1=ts,
+                            y0=0,
+                            y1=1,
+                            fillcolor=fill,
+                            line=dict(width=0),
+                            layer="below",
+                        )
+                    )
+                    start = ts
+                    prev = s
 
-        shapes = []
+                elif prev is None:
+                    start = ts
+                    prev = s
 
-        # Long regime shading (light green)
-        for t0, t1 in long_regions:
-            shapes.append(
-                dict(
-                    type="rect",
-                    xref="x",
-                    yref="paper",
-                    x0=t0,
-                    x1=t1,
-                    y0=0,
-                    y1=1,
-                    fillcolor="rgba(100,100,100,0.06)",  # soft green
-                    line=dict(width=0),
-                    layer="below",
-                    name="regime_long",
+            # close last segment
+            if prev is not None:
+                fill = "rgba(34,197,94,0.08)" if prev == 1 else "rgba(239,68,68,0.08)"
+                shapes.append(
+                    dict(
+                        type="rect",
+                        xref="x",
+                        yref="paper",
+                        x0=start,
+                        x1=df["timestamp"].iloc[-1],
+                        y0=0,
+                        y1=1,
+                        fillcolor=fill,
+                        line=dict(width=0),
+                        layer="below",
+                    )
                 )
-            )
 
-        # Sell regime shading (light red)
-        # for t0, t1 in sell_regions:
-        #     shapes.append(
-        #         dict(
-        #             type="rect",
-        #             xref="x",
-        #             yref="paper",
-        #             x0=t0,
-        #             x1=t1,
-        #             y0=0,
-        #             y1=1,
-        #             fillcolor="rgba(239,68,68,0.06)",  # soft red
-        #             line=dict(width=0),
-        #             layer="below",
-        #             name="regime_sell",
-        #         )
-        #     )
-
-        fig.update_layout(shapes=shapes)
+            fig.update_layout(shapes=shapes)
    
-    # ---------------------------------------------------------------------
-    # 7) Cursor trace (use equity y-range, NOT [0,1])
-    # ---------------------------------------------------------------------
-    cursor_trace_idxs: list[int] = []
-    if add_cursor:
-        fig.add_trace(
-            go.Scatter(
-                x=[x.iloc[0], x.iloc[0]],
-                y=[y1_lo, y1_hi],
-                mode="lines",
-                line=dict(width=1),
-                showlegend=False,
-                name="Cursor",
-            ),
-            row=1, col=1,
-        )
-        cursor_trace_idxs.append(len(fig.data) - 1)
 
     # ---------------------------------------------------------------------
     # 8) Frames: update ONLY xaxis range (+ cursor x)
     # ---------------------------------------------------------------------
     timeline = x.iloc[::every].to_list()
     frames: list[go.Frame] = []
-    for i, t in enumerate(timeline):
-        frame_layout = go.Layout(xaxis=dict(range=[xmin, t], autorange=False))
 
-        if add_cursor and cursor_trace_idxs:
-            frame_data = [go.Scatter(x=[t, t], y=[y1_lo, y1_hi])]
-            frames.append(go.Frame(name=str(i), layout=frame_layout, data=frame_data, traces=cursor_trace_idxs))
-        else:
-            frames.append(go.Frame(name=str(i), layout=frame_layout))
+    for i, t in enumerate(timeline):
+        mask = x <= t
+
+        data_updates = []
+
+        # --- Trace 0: Buy & Hold equity ---
+        data_updates.append(dict(x=x[mask], y=bh[mask]))
+
+        # --- Trace 1: Strategy equity ---
+        data_updates.append(dict(x=x[mask], y=eq[mask]))
+
+        # --- Trace 2: Returns (if present) ---
+        if has_ret:
+            if returns_as_bars:
+                r_masked = r[mask]
+                colors = np.where(r_masked >= 0, PAL["pos"], PAL["neg"]).tolist()
+
+                data_updates.append(
+                    go.Bar(
+                        x=x[mask],
+                        y=r_masked,
+                        marker_color=colors,
+                        name="Return",
+                    )
+                )
+            else:
+                data_updates.append(
+                    ScatterLine(
+                        x=x[mask],
+                        y=r[mask],
+                        mode="lines",
+                        name="Return",
+                    )
+                )
+
+        # --- Weights (if present) ---
+        if has_w:
+            data_updates.append(dict(x=x[mask], y=w[mask]))
+
+        # --- State var + Tau/Tau* (if present) ---
+        if has_rv:
+            data_updates.append(dict(x=x[mask], y=rv[mask]))
+
+            if "tau" in df.columns:
+                data_updates.append(dict(x=x[mask], y=df["tau"][mask]))
+            elif "tau_star" in df.columns:
+                data_updates.append(dict(x=x[mask], y=df["tau_star"][mask]))
+
+        frames.append(go.Frame(name=str(i), data=data_updates))
 
     fig.frames = frames
 
@@ -537,7 +554,7 @@ def plot_rv_tau_weights_returns_equity_animated(
     fig.update_yaxes(title_text="Equity", row=1, col=1)
     fig.update_yaxes(title_text="Return", row=2, col=1)
     fig.update_yaxes(title_text="Weight", row=3, col=1)
-    fig.update_yaxes(title_text="State Variable/ τ", row=4, col=1)
+    fig.update_yaxes(title_text="State Variable", row=4, col=1)
     fig.update_xaxes(
         title_text="Time",
         title_standoff=18,   # pushes title downward
@@ -546,18 +563,31 @@ def plot_rv_tau_weights_returns_equity_animated(
 
     fig.add_trace(
         go.Scatter(
-            x=[x.iloc[0], x.iloc[0]],
-            y=[y1_lo, y1_lo],  # irrelevant; won't be visible
-            mode="lines",
-            line=dict(width=0),
-            fill="toself",
-            fillcolor="rgba(100,100,100,0.10)",
-            name="Buying Regime",
-            visible=True,           # legend controls this trace visibility
+            x=[None],
+            y=[None],
+            mode="markers",
+            marker=dict(size=10, color="rgba(34,197,94,0.35)"),
+            name="Buy Regime",
             showlegend=True,
             hoverinfo="skip",
         ),
-        row=1, col=1,
+        row=1,
+        col=1,
+    )
+
+    # Legend item: Out-of-market regime (red)
+    fig.add_trace(
+        go.Scatter(
+            x=[None],
+            y=[None],
+            mode="markers",
+            marker=dict(size=10, color="rgba(239,68,68,0.35)"),
+            name="Out of Market",
+            showlegend=True,
+            hoverinfo="skip",
+        ),
+        row=1,
+        col=1,
     )
 
     fig.update_layout(
@@ -578,6 +608,6 @@ def plot_rv_tau_weights_returns_equity_animated(
     )
     if debug:
         print("[animate_debug] frames:", len(timeline), "every:", every, "frame_ms:", frame_ms)
-        print("[animate_debug] returns_as_bars:", returns_as_bars, "use_webgl:", use_webgl, "cursor:", add_cursor)
+        print("[animate_debug] returns_as_bars:", returns_as_bars, "use_webgl:", use_webgl)
 
     return fig

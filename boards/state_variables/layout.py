@@ -48,7 +48,7 @@ def build_layout(*, runs_summary: pd.DataFrame, param_cols: List[str], default_o
     style={
         "fontFamily": "system-ui", "padding": "16px", "background": "#f6f7fb",
         "display": "grid",
-        "gridTemplateColumns": "420px minmax(0, 1fr)",
+        "gridTemplateColumns": "520px minmax(0, 1fr)",
         "gap": "14px",
         "alignItems": "start",
     },
@@ -107,6 +107,59 @@ def build_layout(*, runs_summary: pd.DataFrame, param_cols: List[str], default_o
 
                 html.Hr(style={"border": "none", "borderTop": "1px solid #eee", "margin": "16px 0"}),
 
+                                # -------------------------
+                # Run Configuration
+                # -------------------------
+                html.Div("Run Configuration", style={"fontWeight": 800, "marginBottom": "8px"}),
+
+                html.Div(
+                    style={"display": "grid", "gridTemplateColumns": "1fr", "gap": "10px"},
+                    children=[
+                        html.Div(
+                            children=[
+                                html.Div(
+                                    "Chosen Parameters",
+                                    style={"fontSize": "12px", "color": "#666", "marginBottom": "6px"},
+                                ),
+                                dash_table.DataTable(
+                                    id="chosen-params-table",
+                                    columns=[{"name": "Parameter", "id": "param"}, {"name": "Value", "id": "value"}],
+                                    data=[],
+                                    style_table={
+                                        "border": "1px solid #eee",
+                                        "borderRadius": "10px",
+                                        "overflow": "hidden",
+                                    },
+                                    style_cell={"fontSize": 12, "padding": "8px", "border": "none"},
+                                    style_header={"fontWeight": 800, "background": "#fafafa", "borderBottom": "1px solid #eee"},
+                                ),
+                            ]
+                        ),
+
+                        html.Div(
+                            children=[
+                                html.Div(
+                                    "Fixed Settings",
+                                    style={"fontSize": "12px", "color": "#666", "marginBottom": "6px"},
+                                ),
+                                dash_table.DataTable(
+                                    id="fixed-settings-table",
+                                    columns=[{"name": "Setting", "id": "param"}, {"name": "Value", "id": "value"}],
+                                    data=[],
+                                    style_table={
+                                        "border": "1px solid #eee",
+                                        "borderRadius": "10px",
+                                        "overflow": "hidden",
+                                    },
+                                    style_cell={"fontSize": 12, "padding": "8px", "border": "none"},
+                                    style_header={"fontWeight": 800, "background": "#fafafa", "borderBottom": "1px solid #eee"},
+                                ),
+                            ]
+                        ),
+                    ],
+                ),
+
+                html.Hr(style={"border": "none", "borderTop": "1px solid #eee", "margin": "16px 0"}),
                 # -------------------------
                 # Run Stats (moved here)
                 # -------------------------
@@ -176,7 +229,7 @@ def build_layout(*, runs_summary: pd.DataFrame, param_cols: List[str], default_o
                         dcc.Graph(
                             id="equity-fig",
                             config={"displayModeBar": False, "responsive": True},
-                            style={"height": "920px"},
+                            # style={"height": "920px"},
                         ),
                     ],
                 ),

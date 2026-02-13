@@ -81,7 +81,8 @@ def register_callbacks(
             return empty_fig, "-", "-", "-", "-", "-", [], empty_fig, "Run not found.", empty_fig, "Run not found."
         row = row_df.iloc[0]
 
-        eq_fig = plot_equity_animated(run_id, strategy)
+        # eq_fig = plot_equity_animated(run_id, strategy)
+        eq_fig = plot_equity(run_id, strategy)
 
         prefix = {"c2c": "c2c", "o2c": "o2c"}.get(strategy, "c2c")
         sharpe = row.get(f"{prefix}_sharpe", None)
