@@ -1,534 +1,23 @@
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-# =============================================================================
-# Panel builders
-# =============================================================================
-
-def build_equity_panel(dfr: pd.DataFrame):
-    g = (
-        dfr[["timestamp", "bh_equity"]]
-        .rename(columns={"bh_equity": "equity"})
-        .copy()
-    )
-
-    s = (
-        dfr[["timestamp", "equity_net", "turnover"]]
-        .rename(columns={"equity_net": "equity"})
-        .copy()
-    )
-
-    has_signal = "signal" in dfr.columns
-    if has_signal:
-        s["signal"] = pd.to_numeric(dfr["signal"], errors="coerce")
-
-    # -----------------------------
-    # Base traces (first point only)
-    # -----------------------------
-    traces = [
-        go.Scatter(
-            x=[g["timestamp"].iloc[0]] if len(g) else [],
-            y=[g["equity"].iloc[0]] if len(g) else [],
-            mode="lines",
-            name="Buy & Hold",
-            line=dict(color="gray", dash="dash"),
-        ),
-        go.Scatter(
-            x=[s["timestamp"].iloc[0]] if len(s) else [],
-            y=[s["equity"].iloc[0]] if len(s) else [],
-            mode="lines",
-            name="Strategy",
-            line=dict(color="black", width=3),
-        ),
-    ]
-
-    # -----------------------------
-    # Turnover shapes (precompute)
-    # -----------------------------
-    shapes_all = []
-
-    if len(s):
-        eps = 1e-8
-        turnover_event = s["turnover"].fillna(0).astype(float) > eps
-
-        if has_signal and s["signal"].notna().any():
-            sig_prev = s["signal"].shift(1)
-
-            flip_up = turnover_event & (sig_prev == 0) & (s["signal"] == 1)
-            flip_dn = turnover_event & (sig_prev == 1) & (s["signal"] == 0)
-
-            for ts in s.loc[flip_up, "timestamp"]:
-                shapes_all.append(
-                    dict(
-                        type="line",
-                        opacity=0.2,
-                        x0=ts,
-                        x1=ts,
-                        y0=0,
-                        y1=1,
-                        xref="x",
-                        yref="paper",
-                        line=dict(width=2, color="green"),
-                    )
-                )
-
-            for ts in s.loc[flip_dn, "timestamp"]:
-                shapes_all.append(
-                    dict(
-                        type="line",
-                        opacity=0.2,
-                        x0=ts,
-                        x1=ts,
-                        y0=0,
-                        y1=1,
-                        xref="x",
-                        yref="paper",
-                        line=dict(width=2, color="red"),
-                    )
-                )
-
-        else:
-            for ts in s.loc[turnover_event, "timestamp"]:
-                shapes_all.append(
-                    dict(
-                        type="line",
-                        opacity=0.15,
-                        x0=ts,
-                        x1=ts,
-                        y0=0,
-                        y1=1,
-                        xref="x",
-                        yref="paper",
-                        line=dict(width=2, color="blue"),
-                    )
-                )
-
-    # -----------------------------
-    # Per-frame updates
-    # -----------------------------
-    def frame_at(t):
-        gg = g[g["timestamp"] <= t]
-        ss = s[s["timestamp"] <= t]
-
-        return [
-            go.Scatter(x=gg["timestamp"], y=gg["equity"]),
-            go.Scatter(x=ss["timestamp"], y=ss["equity"]),
-        ]
-
-    def layout_at(t):
-        return {}
-    
-
-    return traces, frame_at, layout_at
-
-
-def build_ret_panel(dfr: pd.DataFrame):
-    if "weights" not in dfr.columns:
-        traces = [
-            go.Scatter(
-                x=[],
-                y=[],
-                mode="lines",
-                name="Return",
-            )
-        ]
-
-        def frame_at(t):
-            return [go.Scatter(x=[], y=[])]
-
-        def layout_at(t):
-            return {}
-
-        return traces, frame_at, layout_at
-
-    x = dfr["timestamp"]
-    y = pd.to_numeric(dfr["weights"], errors="coerce")
-
-    traces = [
-        go.Scatter(
-            x=[x.iloc[0]],
-            y=[y.iloc[0]],
-            mode="lines",
-            name="Return",
-        )
-    ]
-
-    def frame_at(t):
-        mask = dfr["timestamp"] <= t
-        return [go.Scatter(x=x[mask], y=y[mask])]
-
-    def layout_at(t):
-        return {}
-
-    return traces, frame_at, layout_at
-
-
-# =============================================================================
-# Animator
-# =============================================================================
-
-def animate_together(df: pd.DataFrame) -> go.Figure:
-    # ---------------------------------------------------------------------
-    # 0) Start from the provided dataframe (assumed already filtered to run)
-    # ---------------------------------------------------------------------
-    dfr = df.copy()
-    
-
-    # ---------------------------------------------------------------------
-    # 1) Validate required columns
-    # ---------------------------------------------------------------------
-    required = {"timestamp", "bh_equity", "equity_net", "turnover"}
-    missing = required - set(dfr.columns)
-
-    if missing:
-        fig = go.Figure()
-        fig.add_annotation(
-            text=f"Missing columns: {', '.join(sorted(missing))}",
-            xref="paper",
-            yref="paper",
-            x=0.5,
-            y=0.5,
-            showarrow=False,
-        )
-        fig.update_layout(margin=dict(l=10, r=10, t=10, b=10))
-        return fig
-
-    # ---------------------------------------------------------------------
-    # 2) Clean + sort timestamps (do this once, shared by all panels)
-    # ---------------------------------------------------------------------
-    dfr["timestamp"] = pd.to_datetime(dfr["timestamp"], errors="coerce")
-    dfr = dfr.dropna(subset=["timestamp"]).sort_values("timestamp")
-
-    if dfr.empty:
-        fig = go.Figure()
-        fig.add_annotation(
-            text="No rows after timestamp cleaning.",
-            xref="paper",
-            yref="paper",
-            x=0.5,
-            y=0.5,
-            showarrow=False,
-        )
-        fig.update_layout(margin=dict(l=10, r=10, t=10, b=10))
-        return fig
-
-    # ---------------------------------------------------------------------
-    # 3) Shared timeline for animation (unique timestamps, in order)
-    # ---------------------------------------------------------------------
-    timeline = dfr["timestamp"].dropna().unique()
-
-    # ---------------------------------------------------------------------
-    # 4) Build panels
-    # ---------------------------------------------------------------------
-    eq_traces, eq_frame_at, eq_layout_at = build_equity_panel(dfr)
-    ret_traces, ret_frame_at, ret_layout_at = build_ret_panel(dfr)
-
-    # ---------------------------------------------------------------------
-    # 5) Create a single figure with subplots so everything animates together
-    # ---------------------------------------------------------------------
-    fig = make_subplots(
-        rows=2,
-        cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.06,
-    )
-    
-    # ---------------------------------------------------------------------
-    # 6) Add traces in a fixed order (this order MUST match frame updates)
-    # ---------------------------------------------------------------------
-    for tr in eq_traces:
-        fig.add_trace(tr, row=1, col=1)
-
-    for tr in ret_traces:
-        fig.add_trace(tr, row=2, col=1)
-
-    # ----- Equity Y bounds (row 1) -----
-    equity_all = pd.concat(
-        [
-            dfr["bh_equity"].astype(float),
-            dfr["equity_net"].astype(float),
-        ],
-        axis=0,
-    )
-
-    ymin = float(equity_all.min())
-    ymax = float(equity_all.max())
-
-    ypad = 0.02 * (ymax - ymin) if ymax > ymin else 1.0
-
-    fig.update_yaxes(
-        range=[ymin - ypad, ymax + ypad],
-        autorange=False,
-        row=1,
-        col=1,
-    )
-
-    # ----- Return Y bounds (row 2) -----
-    if "ret" in dfr.columns:
-        ret_all = pd.to_numeric(dfr["ret"], errors="coerce")
-
-        if ret_all.notna().any():
-            rmax = float(ret_all.abs().max())
-        else:
-            rmax = 1.0
-
-        rpad = 0.05 * rmax if rmax > 0 else 0.01
-
-        fig.update_yaxes(
-            range=[-(rmax + rpad), (rmax + rpad)],
-            autorange=False,
-            row=2,
-            col=1,
-        )
-
-    # ---------------------------------------------------------------------
-    # 8) Build frames (trace updates must match add_trace order)
-    # ---------------------------------------------------------------------
-    xmin = dfr["timestamp"].min()
-    xmax_full = dfr["timestamp"].max()
-
-    frames = []
-
-    fig.update_xaxes(range=[xmin, xmax_full], autorange=False)
-
-    SHAPE_EVERY = 10  # try 10, 20, 50
-    for i, t in enumerate(timeline):
-        data_updates = []
-        data_updates += eq_frame_at(t)
-        data_updates += ret_frame_at(t)
-
-        layout_updates = {}
-
-
-        frames.append(go.Frame(name=str(i), data=data_updates, layout=go.Layout(**layout_updates)))
-
-    fig.frames = frames
-
-    # ---------------------------------------------------------------------
-    # 9) Animation controls
-    # ---------------------------------------------------------------------
-    frame_ms = 40
-    transition_ms = 0
-
-    fig.update_layout(
-        height=650,  # more vertical room overall
-        margin=dict(l=10, r=10, t=110, b=50),  # BIGGER TOP MARGIN for controls/slider
-        legend=dict(orientation="h", y=1.02, yanchor="bottom"),
-        updatemenus=[
-            dict(
-                type="buttons",
-                direction="left",
-                x=0.0,
-                y=1.22,          # move buttons higher
-                xanchor="left",
-                yanchor="top",
-                showactive=False,
-                buttons=[
-                    dict(
-                        label="Play",
-                        method="animate",
-                        args=[
-                            None,
-                            dict(
-                                frame=dict(duration=frame_ms, redraw=False),
-                                transition=dict(duration=transition_ms),
-                                fromcurrent=True,
-                                mode="immediate",
-                            ),
-                        ],
-                    ),
-                    dict(
-                        label="Pause",
-                        method="animate",
-                        args=[
-                            [None],
-                            dict(
-                                frame=dict(duration=0, redraw=False),
-                                transition=dict(duration=0),
-                                mode="immediate",
-                            ),
-                        ],
-                    ),
-                ],
-            )
-        ],
-        sliders=[
-            dict(
-                x=0.0,
-                y=1.12,          # move slider higher
-                xanchor="left",
-                yanchor="top",
-                len=1.0,
-                pad=dict(t=0, b=0),
-                steps=[
-                    dict(
-                        method="animate",
-                        label=str(t)[:19],
-                        args=[
-                            [str(i)],
-                            dict(
-                                frame=dict(duration=0, redraw=False),
-                                transition=dict(duration=0),
-                                mode="immediate",
-                            ),
-                        ],
-                    )
-                    for i, t in enumerate(timeline)
-                ],
-            )
-        ],
-    )
-
-    # ---------------------------------------------------------------------
-    # 10) Labels
-    # ---------------------------------------------------------------------
-    fig.update_xaxes(title_text="Time", row=2, col=1)
-
-    fig.update_yaxes(title_text="Equity", row=1, col=1)
-    fig.update_yaxes(title_text="Return", row=2, col=1)
-
-
-
-
-import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 
-def plot_rv_tau_weights_returns_equity(dfr: pd.DataFrame) -> go.Figure:
-    df = dfr.copy()
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    df = df.dropna(subset=["timestamp"]).sort_values("timestamp")
-
-    fig = make_subplots(
-        rows=4,
-        cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.03,
-        row_heights=[0.45, 0.18, 0.18, 0.19],
-        subplot_titles=("Equity", "Returns", "Weights / Exposure", "Realized Variance & Threshold"),
-    )
-
-    # -----------------------
-    # Row 1: Equity
-    # -----------------------
-    fig.add_trace(
-        go.Scatter(
-            x=df["timestamp"],
-            y=pd.to_numeric(df["bh_equity"], errors="coerce"),
-            mode="lines",
-            name="Buy & Hold",
-            line=dict(dash="dash"),
-        ),
-        row=1, col=1,
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=df["timestamp"],
-            y=pd.to_numeric(df["equity_net"], errors="coerce"),
-            mode="lines",
-            name="Strategy",
-            line=dict(width=3),
-        ),
-        row=1, col=1,
-    )
-
-    # -----------------------
-    # Row 2: Returns (bars)
-    # -----------------------
-    if "ret" in df.columns:
-        r = pd.to_numeric(df["ret"], errors="coerce")
-        fig.add_trace(
-            go.Bar(
-                x=df["timestamp"],
-                y=r,
-                name="Return",
-            ),
-            row=2, col=1,
-        )
-
-    # -----------------------
-    # Row 3: Weights
-    # -----------------------
-    if "weights" in df.columns:
-        w = pd.to_numeric(df["weights"], errors="coerce")
-        fig.add_trace(
-            go.Scatter(
-                x=df["timestamp"],
-                y=w,
-                mode="lines",
-                name="Weight",
-            ),
-            row=3, col=1,
-        )
-
-    # -----------------------
-    # Row 4: RV + Threshold
-    # -----------------------
-    if "state_var" in df.columns:
-        rv = pd.to_numeric(df["state_var"], errors="coerce")
-        fig.add_trace(
-            go.Scatter(
-                x=df["timestamp"],
-                y=rv,
-                mode="lines",
-                name="RV",
-            ),
-            row=4, col=1,
-        )
-
-        # threshold: either a constant tau_star or a time series tau
-        if "tau_star" in df.columns:
-            tau = pd.to_numeric(df["tau_star"], errors="coerce")
-            fig.add_trace(
-                go.Scatter(
-                    x=df["timestamp"],
-                    y=tau,
-                    mode="lines",
-                    name="τ(t)",
-                    line=dict(dash="dash"),
-                ),
-                row=4, col=1,
-            )
-        elif "tau_star" in df.columns:
-            tau_star = float(pd.to_numeric(df["tau_star"], errors="coerce").dropna().iloc[0])
-            fig.add_trace(
-                go.Scatter(
-                    x=df["timestamp"],
-                    y=[tau_star] * len(df),
-                    mode="lines",
-                    name="τ*",
-                    line=dict(dash="dash"),
-                ),
-                row=4, col=1,
-            )
-
-    # -----------------------
-    # Layout polish
-    # -----------------------
-    xmin, xmax = df["timestamp"].min(), df["timestamp"].max()
-    fig.update_xaxes(range=[xmin, xmax], autorange=False)
-
-    fig.update_layout(
-        height=900,
-        margin=dict(l=10, r=10, t=60, b=30),
-        legend=dict(orientation="h", y=1.02, yanchor="bottom"),
-    )
-
-    fig.update_yaxes(title_text="Equity", row=1, col=1)
-    fig.update_yaxes(title_text="Return", row=2, col=1)
-    fig.update_yaxes(title_text="Weight", row=3, col=1)
-    fig.update_yaxes(title_text="RV / τ", row=4, col=1)
-    fig.update_xaxes(title_text="Time", row=4, col=1)
-
-    return fig
-
-
-import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+PAL = {
+    "bh": "#64748b",        # slate (buy&hold)
+    "strategy": "#0f172a",  # near-black navy
+    "pos": "#16a34a",       # green
+    "neg": "#dc2626",       # red
+    "weight": "#7c3aed",    # violet
+    "state": "#f59e0b",     # amber
+    "tau": "#06b6d4",       # cyan
+    "grid": "rgba(15,23,42,0.08)",
+    "regime_buy": "rgba(100,100,100,0.08)",   # soft green band
+}
 
 
 def plot_rv_tau_weights_returns_equity_animated(
@@ -538,10 +27,10 @@ def plot_rv_tau_weights_returns_equity_animated(
     frame_ms: int = 200,
     every: int = 5,
     add_cursor: bool = False ,
-    returns_as_bars: bool = False,   # bars stutter more when x-range animates
+    returns_as_bars: bool = True,   # bars stutter more when x-range animates
     use_webgl: bool = True,          # Scattergl smoother for long series
     lock_xticks: bool = True,        # reduces perceived "wobble" from tick recompute
-    debug: bool = True,              # prints diagnostics
+    debug: bool = False,              # prints diagnostics
 ) -> go.Figure:
     # ---------------------------------------------------------------------
     # 0) Copy + basic timestamp cleaning
@@ -616,11 +105,19 @@ def plot_rv_tau_weights_returns_equity_animated(
         rows=4,
         cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.03,
-        row_heights=[0.45, 0.18, 0.18, 0.19],
-        subplot_titles=("Equity", "Returns", "Weights / Exposure", "Realized Variance & Threshold"),
+        vertical_spacing=0.06,
+        row_heights=[0.42, 0.2, 0.18, 0.3],
+        subplot_titles=("Equity", "Returns", "Weights / Exposure", "State Variable & Threshold"),
     )
 
+    for a in fig.layout.annotations:
+        a.update(
+            font=dict(
+                size=15,
+                color="#111827",
+                family="Arial Black",  # bold-looking font
+            )
+        )
     ScatterLine = go.Scattergl if use_webgl else go.Scatter
 
     x = df["timestamp"]
@@ -638,7 +135,7 @@ def plot_rv_tau_weights_returns_equity_animated(
             y=bh,
             mode="lines",
             name="Buy & Hold",
-            line=dict(dash="dash"),
+            line=dict(dash="dash", color=PAL["bh"]),
         ),
         row=1, col=1,
     )
@@ -648,7 +145,7 @@ def plot_rv_tau_weights_returns_equity_animated(
             y=eq,
             mode="lines",
             name="Strategy",
-            line=dict(width=3),
+            line=dict(width=3, color=PAL["strategy"]),
         ),
         row=1, col=1,
     )
@@ -657,45 +154,79 @@ def plot_rv_tau_weights_returns_equity_animated(
     r = df["ret"] if has_ret else None
     if has_ret:
         if returns_as_bars:
-            fig.add_trace(go.Bar(x=x, y=r, name="Return"), row=2, col=1)
+            colors = np.where(r >= 0, PAL["pos"], PAL["neg"])
+
+            fig.add_trace(
+                go.Bar(
+                    x=x,
+                    y=r,
+                    name="Return",
+                    marker=dict(color=colors),
+                ),
+                row=2, col=1,
+            )
         else:
             fig.add_trace(ScatterLine(x=x, y=r, mode="lines", name="Return"), row=2, col=1)
 
     has_w = "weights" in df.columns
     w = df["weights"] if has_w else None
     if has_w:
-        fig.add_trace(ScatterLine(x=x, y=w, mode="lines", name="Weight"), row=3, col=1)
+        fig.add_trace(ScatterLine(x=x, y=w, mode="lines", name="Weight",
+                                  line=dict(color=PAL["weight"], width=2)), row=3, col=1)
 
     has_rv = "state_var" in df.columns
     rv = df["state_var"] if has_rv else None
     if has_rv:
-        fig.add_trace(ScatterLine(x=x, y=rv, mode="lines", name="RV"), row=4, col=1)
+        fig.add_trace(
+            ScatterLine(x=x, y=rv, mode="lines", name="State Var",
+                        line=dict(color=PAL["state"], width=2)),
+            row=4, col=1,
+        )
 
         if "tau" in df.columns:
             tau = df["tau"]
             fig.add_trace(
-                ScatterLine(x=x, y=tau, mode="lines", name="τ(t)", line=dict(dash="dash")),
+                ScatterLine(x=x, y=tau, mode="lines", name="τ(t)", line=dict(dash="dash", color=PAL["tau"])),
                 row=4, col=1,
             )
         elif "tau_star" in df.columns:
             tau_star = df["tau_star"]
             fig.add_trace(
-                ScatterLine(x=x, y=tau_star, mode="lines", name="τ*", line=dict(dash="dash")),
+                ScatterLine(x=x, y=tau_star, mode="lines", name="τ*", line=dict(dash="dash", color=PAL["tau"])),
                 row=4, col=1,
             )
 
     # ---------------------------------------------------------------------
     # 6) Lock axis ranges (explicit ranges for all y-axes)
     # ---------------------------------------------------------------------
+    # lock range on all x-axes
     fig.update_xaxes(range=[xmin, xmax], autorange=False)
 
+    # styling on all x-axes (grid etc.)
     fig.update_xaxes(
-        tickmode="linear",
-        dtick="M3",              # every 3 months (try "M1" or "M6")
-        tickformat="%Y-%m",      # stable label size
-        showticklabels=True,
+        showgrid=True,
+        zeroline=False,
         automargin=False,
     )
+
+    # ONLY bottom subplot controls ticks/labels (prevents "weird labels" up top)
+    fig.update_xaxes(
+        tickmode="linear",
+        dtick="M3",
+        tickformat="%Y-%m",
+        showticklabels=True,
+        tickfont=dict(
+            size=14,        # bigger
+            color="black",
+            family="Arial Black",  # bold look (Plotly doesn't have true font-weight)
+        ),
+        automargin=True,
+        row=4, col=1,
+    )
+    # hide x tick labels on upper panels
+    fig.update_xaxes(showticklabels=False, row=1, col=1)
+    fig.update_xaxes(showticklabels=False, row=2, col=1)
+    fig.update_xaxes(showticklabels=False, row=3, col=1)
 
     # Equity y
     eq_all = pd.concat([bh, eq]).dropna()
@@ -743,6 +274,131 @@ def plot_rv_tau_weights_returns_equity_animated(
     if lock_xticks:
         fig.update_xaxes(nticks=6)
 
+
+    # shapes_turnover = []
+    # if "turnover" in df.columns:
+    #     to = pd.to_numeric(df["turnover"], errors="coerce").fillna(0.0)
+    #     eps = 1e-8
+    #     event = to > eps
+
+    #     has_signal = "signal" in df.columns
+    #     sig = pd.to_numeric(df["signal"], errors="coerce") if has_signal else None
+
+    #     if has_signal and sig is not None and sig.notna().any():
+    #         sig_prev = sig.shift(1)
+    #         flip_up = (sig_prev == 0) & (sig == 1)
+    #         flip_dn = (sig_prev == 1) & (sig == 0)
+
+
+    #         for ts in df.loc[flip_up, "timestamp"]:
+    #             shapes_turnover.append(
+    #                 dict(
+    #                     type="line",
+    #                     xref="x", yref="y",          # IMPORTANT: equity panel axes
+    #                     x0=ts, x1=ts,
+    #                     y0=y1_lo, y1=y1_hi,
+    #                     opacity=0.20,
+    #                     line=dict(width=1.5, color="#16a34a"),
+    #                     layer="above",
+    #                 )
+    #             )
+    #         for ts in df.loc[flip_dn, "timestamp"]:
+    #             shapes_turnover.append(
+    #                 dict(
+    #                     type="line",
+    #                     xref="x", yref="y",
+    #                     x0=ts, x1=ts,
+    #                     y0=y1_lo, y1=y1_hi,
+    #                     opacity=0.20,
+    #                     line=dict(width=1.5, color="#dc2626"),
+    #                     layer="above",
+    #                 )
+    #             )
+    #     else:
+    #         for ts in df.loc[event, "timestamp"]:
+    #             shapes_turnover.append(
+    #                 dict(
+    #                     type="line",
+    #                     xref="x", yref="y",
+    #                     x0=ts, x1=ts,
+    #                     y0=y1_lo, y1=y1_hi,
+    #                     opacity=0.15,
+    #                     line=dict(width=1, color="blue"),
+    #                     layer="above",
+    #                 )
+    #             )
+
+    # # Attach shapes once (they'll get clipped by x-range during animation)
+    # if shapes_turnover:
+    #     fig.update_layout(shapes=list(fig.layout.shapes) + shapes_turnover if fig.layout.shapes else shapes_turnover)
+   
+    if "signal" in df.columns:
+        sig = pd.to_numeric(df["signal"], errors="coerce")
+
+        long_regions = []
+        sell_regions = []
+
+        start = None
+        current_regime = None
+
+        for ts, s in zip(df["timestamp"], sig):
+            if s != current_regime:
+                if start is not None:
+                    if current_regime == 1:
+                        long_regions.append((start, prev_ts))
+                    elif current_regime == 0:
+                        sell_regions.append((start, prev_ts))
+                start = ts
+                current_regime = s
+            prev_ts = ts
+
+        # close last regime
+        if start is not None:
+            if current_regime == 1:
+                long_regions.append((start, df["timestamp"].iloc[-1]))
+            elif current_regime == 0:
+                sell_regions.append((start, df["timestamp"].iloc[-1]))
+
+        shapes = []
+
+        # Long regime shading (light green)
+        for t0, t1 in long_regions:
+            shapes.append(
+                dict(
+                    type="rect",
+                    xref="x",
+                    yref="paper",
+                    x0=t0,
+                    x1=t1,
+                    y0=0,
+                    y1=1,
+                    fillcolor="rgba(100,100,100,0.06)",  # soft green
+                    line=dict(width=0),
+                    layer="below",
+                    name="regime_long",
+                )
+            )
+
+        # Sell regime shading (light red)
+        # for t0, t1 in sell_regions:
+        #     shapes.append(
+        #         dict(
+        #             type="rect",
+        #             xref="x",
+        #             yref="paper",
+        #             x0=t0,
+        #             x1=t1,
+        #             y0=0,
+        #             y1=1,
+        #             fillcolor="rgba(239,68,68,0.06)",  # soft red
+        #             line=dict(width=0),
+        #             layer="below",
+        #             name="regime_sell",
+        #         )
+        #     )
+
+        fig.update_layout(shapes=shapes)
+   
     # ---------------------------------------------------------------------
     # 7) Cursor trace (use equity y-range, NOT [0,1])
     # ---------------------------------------------------------------------
@@ -765,7 +421,6 @@ def plot_rv_tau_weights_returns_equity_animated(
     # 8) Frames: update ONLY xaxis range (+ cursor x)
     # ---------------------------------------------------------------------
     timeline = x.iloc[::every].to_list()
-    fig.update_xaxes(range=[xmin, xmax], autorange=False)
     frames: list[go.Frame] = []
     for i, t in enumerate(timeline):
         frame_layout = go.Layout(xaxis=dict(range=[xmin, t], autorange=False))
@@ -778,25 +433,43 @@ def plot_rv_tau_weights_returns_equity_animated(
 
     fig.frames = frames
 
-    if len(timeline) > 5:
-        fig.update_xaxes(range=[xmin, timeline[5]], autorange=False)
-
+   
     # ---------------------------------------------------------------------
     # 9) Controls
     # ---------------------------------------------------------------------
     fig.update_layout(
-        height=900,
-        margin=dict(l=10, r=10, t=115, b=30),
-        legend=dict(orientation="h", y=1.02, yanchor="bottom"),
+        template="plotly_white",
+        height=940,
+        margin=dict(l=20, r=20, t=90, b=40),
+
+        legend=dict(
+            orientation="h",
+            y=1.02,
+            yanchor="bottom",
+            x=0.0,
+            xanchor="left",
+            font=dict(size=12),
+        ),
+
         updatemenus=[
-            dict(
+           dict(
                 type="buttons",
                 direction="left",
                 x=0.0,
-                y=1.22,
+                y=1.25,
                 xanchor="left",
                 yanchor="top",
                 showactive=False,
+                pad=dict(t=4, r=12),
+
+                bgcolor="#1f2937",        # dark slate background
+                bordercolor="#111827",
+                borderwidth=1,
+                font=dict(
+                    size=14,              # larger text
+                    color="white",        # text color
+                ),
+
                 buttons=[
                     dict(
                         label="Play",
@@ -804,7 +477,7 @@ def plot_rv_tau_weights_returns_equity_animated(
                         args=[
                             None,
                             dict(
-                                frame=dict(duration=frame_ms, redraw=False),
+                                frame=dict(duration=frame_ms, redraw=True),
                                 transition=dict(duration=0),
                                 fromcurrent=True,
                                 mode="immediate",
@@ -825,15 +498,22 @@ def plot_rv_tau_weights_returns_equity_animated(
                     ),
                 ],
             )
+
         ],
+
         sliders=[
             dict(
                 x=0.0,
-                y=1.12,
+                y=1.20,              # sits neatly under buttons
                 xanchor="left",
                 yanchor="top",
                 len=1.0,
-                pad=dict(t=0, b=0),
+                active=max(len(timeline) - 1, 0),
+                pad=dict(t=10, b=0),
+                currentvalue=dict(
+                    prefix="Date: ",
+                    font=dict(size=12),
+                ),
                 steps=[
                     dict(
                         method="animate",
@@ -853,12 +533,49 @@ def plot_rv_tau_weights_returns_equity_animated(
         ],
     )
 
+
     fig.update_yaxes(title_text="Equity", row=1, col=1)
     fig.update_yaxes(title_text="Return", row=2, col=1)
     fig.update_yaxes(title_text="Weight", row=3, col=1)
-    fig.update_yaxes(title_text="RV / τ", row=4, col=1)
-    fig.update_xaxes(title_text="Time", row=4, col=1)
+    fig.update_yaxes(title_text="State Variable/ τ", row=4, col=1)
+    fig.update_xaxes(
+        title_text="Time",
+        title_standoff=18,   # pushes title downward
+        row=4, col=1,
+    )
 
+    fig.add_trace(
+        go.Scatter(
+            x=[x.iloc[0], x.iloc[0]],
+            y=[y1_lo, y1_lo],  # irrelevant; won't be visible
+            mode="lines",
+            line=dict(width=0),
+            fill="toself",
+            fillcolor="rgba(100,100,100,0.10)",
+            name="Buying Regime",
+            visible=True,           # legend controls this trace visibility
+            showlegend=True,
+            hoverinfo="skip",
+        ),
+        row=1, col=1,
+    )
+
+    fig.update_layout(
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            x=0.01,
+            y=1.02,
+            xanchor="left",
+            yanchor="bottom",
+            bgcolor="rgba(255,255,255,0.75)",
+            bordercolor="rgba(0,0,0,0.12)",
+            borderwidth=1,
+            font=dict(size=12),
+            itemclick="toggle",
+            itemdoubleclick="toggleothers",
+        ),
+    )
     if debug:
         print("[animate_debug] frames:", len(timeline), "every:", every, "frame_ms:", frame_ms)
         print("[animate_debug] returns_as_bars:", returns_as_bars, "use_webgl:", use_webgl, "cursor:", add_cursor)

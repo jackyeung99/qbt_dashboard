@@ -6,11 +6,79 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-
+import math, numbers
 
 # -----------------------------
 # Helpers
 # -----------------------------
+def fmt(value, *, style="auto", decimals=4, prefix="", suffix=""):
+    """
+    Flexible formatter for dashboard values.
+
+    Parameters
+    ----------
+    style : str
+        "auto", "int", "float", "pct", "bps", "currency", or custom format string
+    decimals : int
+        number of decimals for float-style formats
+    prefix/suffix : str
+        optional strings to attach
+    """
+
+    if value is None:
+        return ""
+
+    if isinstance(value, numbers.Number):
+        if math.isnan(value):
+            return ""
+
+        # --------------------------
+        # AUTO
+        # --------------------------
+        if style == "auto":
+            if float(value).is_integer():
+                return f"{int(value):,}"
+            return f"{value:,.{decimals}f}"
+
+        # --------------------------
+        # INTEGER
+        # --------------------------
+        if style == "int":
+            return f"{int(round(value)):,}"
+
+        # --------------------------
+        # FLOAT
+        # --------------------------
+        if style == "float":
+            return f"{value:,.{decimals}f}"
+
+        # --------------------------
+        # PERCENT
+        # --------------------------
+        if style == "pct":
+            return f"{100 * value:.{decimals}f}%"
+
+        # --------------------------
+        # BASIS POINTS
+        # --------------------------
+        if style == "bps":
+            return f"{10000 * value:.{decimals}f} bps"
+
+        # --------------------------
+        # CURRENCY
+        # --------------------------
+        if style == "currency":
+            return f"${value:,.{decimals}f}"
+
+        # --------------------------
+        # Custom format string
+        # --------------------------
+        if "{" in style:
+            return style.format(value)
+
+    # fallback
+    return f"{prefix}{value}{suffix}"
+
 def _ensure_dt_index(ts: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(ts.index, pd.DatetimeIndex):
         ts = ts.copy()

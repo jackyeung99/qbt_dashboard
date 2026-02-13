@@ -6,8 +6,8 @@ from typing import List
 import pandas as pd
 import plotly.express as px
 from dash import Dash, Input, Output, callback
-
-from .plots import animate_together, plot_rv_tau_weights_returns_equity_animated
+from common.plots import fmt
+from .plots import plot_rv_tau_weights_returns_equity_animated
 
 
 def register_callbacks(
@@ -29,12 +29,7 @@ def register_callbacks(
     def _empty_fig():
         return px.line(pd.DataFrame({"x": [], "y": []}), x="x", y="y")
 
-    def _fmt(x, kind="float"):
-        if x is None or (isinstance(x, float) and pd.isna(x)):
-            return "-"
-        if kind == "pct":
-            return f"{100 * float(x):.2f}%"
-        return f"{float(x):.3f}"
+
 
     # Faster filtering: build mask on rs in one pass (no repeated slicing)
     def filter_runs(filters: dict) -> pd.DataFrame:
@@ -46,6 +41,7 @@ def register_callbacks(
         return rs.loc[mask]
 
     dropdown_inputs = [Input({"type": "param-dd", "name": c}, "value") for c in param_cols]
+
 
     @callback(
         Output("run-dd", "options"),
@@ -103,20 +99,21 @@ def register_callbacks(
         turnover = row.get("strat_turnover", None)
         tau_star = row.get("tau_star", None)
 
+    
         stats_cols = [
             "method", "ret_col", "transaction_cost", "state_var",
             "strat_sharpe", "strat_sharpe_buy_regime", "strat_sharpe_no_buy_regime", "strat_sharpe_bh",
             "strat_cumulative_return", "strat_num_buy_days", "strat_num_no_buy_days",
         ]
         stats_cols = [c for c in stats_cols if c in rs.columns]
-        stats = [{"metric": c, "value": str(row.get(c))} for c in stats_cols]
+        stats = [{"metric": c, "value": fmt(row.get(c) ) } for c in stats_cols]
 
         return (
             eq_fig,
-            _fmt(sharpe),
-            _fmt(cumret, "pct"),
-            _fmt(mdd, "pct"),
-            _fmt(turnover),
-            _fmt(tau_star),
+            fmt(sharpe, decimals=2),
+            fmt(cumret, style="pct", decimals=2),
+            fmt(mdd, style="pct", decimals=2),
+            fmt(turnover),
+            fmt(tau_star),
             stats,
         )

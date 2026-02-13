@@ -1,167 +1,186 @@
 # src/dashboards/boards/tau_sensitivity/layout.py
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import List
 
 import pandas as pd
 from dash import dcc, dash_table, html
 
 from .queries import options_from_unique
-# from .meta import TITLE
+
+
+# -----------------------------
+# Shared styles
+# -----------------------------
+# PAGE_BG = "#f6f7fb"
+
+CARD = {
+    "background": "white",
+    "border": "1px solid #e6e6e6",
+    "borderRadius": "14px",
+    "boxShadow": "0 1px 2px rgba(0,0,0,0.04)",
+}
+
+H2 = {"margin": "0", "fontSize": "22px", "fontWeight": 800, "letterSpacing": "-0.2px"}
+SUB = {"marginTop": "4px", "fontSize": "13px", "color": "#666"}
 
 
 def kpi_card(title: str, value_id: str) -> html.Div:
     return html.Div(
         style={
-            "border": "1px solid #ddd",
-            "borderRadius": "10px",
-            "padding": "10px 12px",
+            **CARD,
+            "padding": "12px 12px",
             "minWidth": 0,
-            "background": "white",
+            "minHeight": "74px",
+            "display": "flex",
+            "flexDirection": "column",
+            "justifyContent": "center",
         },
         children=[
-            html.Div(title, style={"fontSize": "12px", "color": "#666"}),
-            html.Div(id=value_id, style={"fontSize": "22px", "fontWeight": "600"}),
+            html.Div(title, style={"fontSize": "12px", "color": "#666", "marginBottom": "6px"}),
+            html.Div(id=value_id, style={"fontSize": "20px", "fontWeight": 800}),
         ],
     )
 
 
 def build_layout(*, runs_summary: pd.DataFrame, param_cols: List[str], default_opts: List[dict], default_value):
     return html.Div(
-        style={"fontFamily": "system-ui", "padding": "16px", "background": "#f6f7fb"},
-        children=[
-            html.H2("State Variables", style={"margin": "0 0 10px 0"}),
-            html.Div(
-                style={"display": "grid", "gridTemplateColumns": "360px 1fr", "gap": "12px", "minWidth": 0},
-                children=[
-                    # =========================
-                    # Left: Filters
-                    # =========================
+    style={
+        "fontFamily": "system-ui", "padding": "16px", "background": "#f6f7fb",
+        "display": "grid",
+        "gridTemplateColumns": "420px minmax(0, 1fr)",
+        "gap": "14px",
+        "alignItems": "start",
+    },
+    children=[
+
+        # =========================
+        # LEFT: Filters + Run Stats
+        # =========================
+        html.Div(
+            style={
+                **CARD,
+                "padding": "14px",
+                "position": "sticky",
+                "top": "12px",
+                "maxHeight": "calc(100vh - 24px)",
+                "overflowY": "auto",
+            },
+            children=[
+                html.Div("Filters", style={"fontWeight": 800, "marginBottom": "10px"}),
+
+                *[
                     html.Div(
-                        style={"background": "white", "borderRadius": "12px", "padding": "12px", "border": "1px solid #e6e6e6"},
+                        style={"marginBottom": "10px"},
                         children=[
-                            html.Div("Filters", style={"fontWeight": 700, "marginBottom": "8px"}),
-                            *[
-                                html.Div(
-                                    style={"marginBottom": "10px"},
-                                    children=[
-                                        html.Div(c, style={"fontSize": "12px", "color": "#666"}),
-                                        dcc.Dropdown(
-                                            id={"type": "param-dd", "name": c},
-                                            options=options_from_unique(runs_summary[c]),
-                                            value=None,
-                                            placeholder=f"All {c}",
-                                            clearable=True,
-                                        ),
-                                    ],
-                                )
-                                for c in param_cols
-                            ],
-                            html.Hr(),
-                            html.Div("Run", style={"fontSize": "12px", "color": "#666"}),
+                            html.Div(
+                                c,
+                                style={"fontSize": "12px", "color": "#666", "marginBottom": "6px"},
+                            ),
                             dcc.Dropdown(
-                                id="run-dd",
-                                options=default_opts,
-                                value=default_value,
-                                placeholder="Select a run",
-                                clearable=False,
+                                id={"type": "param-dd", "name": c},
+                                options=options_from_unique(runs_summary[c]),
+                                value=None,
+                                placeholder=f"All {c}",
+                                clearable=True,
                             ),
-                            html.Div(id="filtered-count", style={"marginTop": "10px", "fontSize": "12px", "color": "#666"}),
                         ],
-                    ),
-                    # =========================
-                    # Right: Content
-                    # =========================
-                    html.Div(
-                        style={"minWidth": 0},
-                        children=[
-                            html.Div(
-                                style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "12px", "minWidth": 0},
-                                children=[
-                                    kpi_card("Sharpe", "kpi-sharpe"),
-                                    kpi_card("CAGR", "kpi-cagr"),
-                                    kpi_card("Max Drawdown", "kpi-mdd"),
-                                    kpi_card("Turnover", "kpi-turnover"),
-                                    kpi_card("τ*", "kpi-tau"),
-                                ],
-                            ),
-                            html.Div(
-                                style={"display": "grid", "gridTemplateColumns": "1fr 420px", "gap": "12px", "minWidth": 0},
-                                children=[
-                                    html.Div(
-                                        style={
-                                            "background": "white",
-                                            "borderRadius": "12px",
-                                            "padding": "12px",
-                                            "border": "1px solid #e6e6e6",
-                                            "minWidth": 0,
-                                        },
-                                        children=[
-                                            html.Div("Equity Curve", style={"fontWeight": 700, "marginBottom": "6px"}),
-                                            dcc.Graph(
-                                                id="equity-fig",
-                                                config={"displayModeBar": False, "responsive": True},
-                                                style={"height": "420px"},
-                                            ),
-                                        ],
-                                    ),
-                                    html.Div(
-                                        style={
-                                            "background": "white",
-                                            "borderRadius": "12px",
-                                            "padding": "12px",
-                                            "border": "1px solid #e6e6e6",
-                                            "minWidth": 0,
-                                        },
-                                        children=[
-                                            html.Div("Run Stats", style={"fontWeight": 700, "marginBottom": "6px"}),
-                                            dash_table.DataTable(
-                                                id="stats-table",
-                                                columns=[{"name": "metric", "id": "metric"}, {"name": "value", "id": "value"}],
-                                                data=[],
-                                                style_cell={"fontSize": 12, "padding": "6px"},
-                                                style_header={"fontWeight": "700", "background": "#fafafa"},
-                                            ),
-                                        ],
-                                    ),
-                                ],
-                            ),
-                            # html.Div(
-                            #     style={
-                            #         "marginTop": "12px",
-                            #         "background": "white",
-                            #         "borderRadius": "12px",
-                            #         "padding": "12px",
-                            #         "border": "1px solid #e6e6e6",
-                            #         "minWidth": 0,
-                            #     },
-                            #     children=[
-                            #         html.Div("τ Diagnostics", style={"fontWeight": 700, "marginBottom": "6px"}),
-                            #         html.Div(
-                            #             style={"display": "flex", "gap": "12px"},
-                            #             children=[
-                            #                 html.Div(
-                            #                     style={"flex": 1, "minWidth": 0},
-                            #                     children=[
-                            #                         dcc.Graph(id="tau-fig", config={"displayModeBar": False}, style={"height": "320px"}),
-                            #                         html.Div(id="tau-help", style={"fontSize": "12px", "color": "#666", "marginTop": "6px"}),
-                            #                     ],
-                            #                 ),
-                            #                 html.Div(
-                            #                     style={"flex": 1, "minWidth": 0},
-                            #                     children=[
-                            #                         dcc.Graph(id="eval-test", config={"displayModeBar": False}, style={"height": "320px"}),
-                            #                         html.Div(id="eval-help", style={"fontSize": "12px", "color": "#666", "marginTop": "6px"}),
-                            #                     ],
-                            #                 ),
-                            #             ],
-                            #         ),
-                            #     ],
-                            # ),
-                        ],
-                    ),
+                    )
+                    for c in param_cols
                 ],
-            ),
-        ],
-    )
+
+                html.Hr(style={"border": "none", "borderTop": "1px solid #eee", "margin": "12px 0"}),
+
+                html.Div("Run", style={"fontSize": "12px", "color": "#666", "marginBottom": "6px"}),
+                dcc.Dropdown(
+                    id="run-dd",
+                    options=default_opts,
+                    value=default_value,
+                    placeholder="Select a run",
+                    clearable=False,
+                ),
+
+                html.Div(
+                    id="filtered-count",
+                    style={"marginTop": "10px", "fontSize": "12px", "color": "#666"},
+                ),
+
+                html.Hr(style={"border": "none", "borderTop": "1px solid #eee", "margin": "16px 0"}),
+
+                # -------------------------
+                # Run Stats (moved here)
+                # -------------------------
+                html.Div("Run Stats", style={"fontWeight": 800, "marginBottom": "8px"}),
+
+                dash_table.DataTable(
+                    id="stats-table",
+                    columns=[
+                        {"name": "metric", "id": "metric"},
+                        {"name": "value", "id": "value"},
+                    ],
+                    data=[],
+                    style_table={
+                        "height": "360px",
+                        "overflowY": "auto",
+                        "border": "1px solid #eee",
+                        "borderRadius": "10px",
+                    },
+                    style_cell={
+                        "fontSize": 12,
+                        "padding": "8px",
+                        "whiteSpace": "normal",
+                        "height": "auto",
+                        "border": "none",
+                    },
+                    style_header={
+                        "fontWeight": 800,
+                        "background": "#fafafa",
+                        "borderBottom": "1px solid #eee",
+                    },
+                ),
+            ],
+        ),
+
+        # =========================
+        # RIGHT: Content
+        # =========================
+        html.Div(
+            style={"minWidth": 0},
+            children=[
+
+                # KPI Row
+                html.Div(
+                    style={
+                        "display": "grid",
+                        "gridTemplateColumns": "repeat(5, minmax(0, 1fr))",
+                        "gap": "12px",
+                        "marginBottom": "12px",
+                    },
+                    children=[
+                        kpi_card("Sharpe", "kpi-sharpe"),
+                        kpi_card("CAGR", "kpi-cagr"),
+                        kpi_card("Max Drawdown", "kpi-mdd"),
+                        kpi_card("Turnover", "kpi-turnover"),
+                        kpi_card("τ*", "kpi-tau"),
+                    ],
+                ),
+
+                # Full-width equity
+                html.Div(
+                    style={**CARD, "padding": "12px", "minWidth": 0},
+                    children=[
+                        html.Div(
+                            "Equity Curve",
+                            style={"fontWeight": 800, "marginBottom": "8px"},
+                        ),
+                        dcc.Graph(
+                            id="equity-fig",
+                            config={"displayModeBar": False, "responsive": True},
+                            style={"height": "920px"},
+                        ),
+                    ],
+                ),
+            ],
+        ),
+    ],
+)
