@@ -145,7 +145,7 @@ def normalize_equity_df(
     x["strategy_equity_norm"] = _normalize_to_one(x[portfolio_value_col].astype(float))
     x["bh_equity_norm"] = _normalize_to_one(x["bh_equity"].astype(float))
 
-    return x
+    return x.dropna(subset=['trained_at_utc'])
 
 # ============================================================
 # 2) Plot helpers

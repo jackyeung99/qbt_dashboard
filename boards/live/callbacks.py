@@ -103,7 +103,7 @@ def register_callbacks(app: Dash, *, load_live_data) -> None:
 
             # normalize + plot
             equity = normalize_equity_df(equity_raw)
-   
+
 
             fig = plot_rv_tau_weights_returns_equity_animated(equity)
 
