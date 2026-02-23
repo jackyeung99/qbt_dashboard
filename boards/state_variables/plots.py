@@ -106,7 +106,7 @@ def plot_rv_tau_weights_returns_equity_animated(
         shared_xaxes=True,
         vertical_spacing=0.06,
         row_heights=[0.42, 0.2, 0.18, 0.3],
-        subplot_titles=("XLE Volatility Regime Timing Strategy", "Returns", "Weights / Exposure", "State Variable & Threshold"),
+        subplot_titles=("XLE Volatility Regime Timing Strategy", "XLE Returns", "Weights / Exposure", "State Variable & Threshold"),
     )
 
     for a in fig.layout.annotations:
