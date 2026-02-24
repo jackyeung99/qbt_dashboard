@@ -101,12 +101,10 @@ def register_callbacks(app: Dash, *, load_live_data) -> None:
             # print(equity_raw.head())
             # print(equity_raw.tail())
 
-            print(equity_raw.columns)
+        
             # normalize + plot
             equity = normalize_equity_df(equity_raw)
 
-            with pd.option_context('display.max_rows', 10, 'display.max_columns', None):
-                print(equity.tail)
 
             fig = plot_rv_tau_weights_returns_equity_animated(equity)
 
