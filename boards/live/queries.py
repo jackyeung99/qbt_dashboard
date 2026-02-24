@@ -11,12 +11,13 @@ def _get(url: str) -> requests.Response:
     r.raise_for_status()
     return r
 
+
+
 @lru_cache(maxsize=1)
-def load_data():
-    # parquet over HTTP (robust)
+def load_data(_key=None):
     eq_resp = _get(f"{S3_BASE}/portfolio_timeseries.parquet")
     equity = pd.read_parquet(BytesIO(eq_resp.content))
-  
+
     performance = _get(f"{S3_BASE}/portfolio_metrics.json").json()
     meta = _get(f"{S3_BASE}/meta.json").json()
 

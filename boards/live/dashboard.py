@@ -7,6 +7,15 @@ from dash.development.base_component import Component
 from .queries import load_data
 from .layout import build_layout  # you’ll update build_layout signature
 from .callbacks import register_callbacks
+from datetime import datetime
+import pytz  # or zoneinfo in Python 3.9+
+
+
+TZ = pytz.timezone("America/Indiana/Indianapolis") 
+
+def _daily_key():
+    # changes once per day (in your timezone)
+    return datetime.now(TZ).strftime("%Y-%m-%d")
 
 
 def build_dashboard(ctx) -> Dict[str, Any]:
@@ -24,7 +33,7 @@ def build_dashboard(ctx) -> Dict[str, Any]:
     # -----------------------------------------
     def load_live_data() -> Tuple:
         # returns (equity_df, performance_dict, meta_dict)
-        return load_data()
+        return load_data(_daily_key())
 
     def layout() -> Component:
       return build_layout(title="Live Portfolio", subtitle="XLE StateSignal")
