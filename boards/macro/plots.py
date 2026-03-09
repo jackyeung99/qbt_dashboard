@@ -411,3 +411,267 @@ def plot_rv_tau_weights_returns_equity_animated(
         fig.update_xaxes(nticks=6)
 
     return fig
+
+
+def plot_rv_tau_weights_returns_equity(
+    dfr: pd.DataFrame,
+    *,
+    run_id: str | None = None,
+    returns_as_bars: bool = True,
+    lock_xticks: bool = True,
+    pal: Dict[str, str] | None = None,
+    debug: bool = False,
+) -> go.Figure:
+    """
+    Static version of the regime dashboard plot.
+
+    Assumes df columns:
+      date, equity_net, bh_equity, port_ret_net, weight_XLE, state_value, tau_star, signal
+    """
+    if pal:
+        PAL.update(pal)
+
+    if dfr is None or dfr.empty:
+        return _empty_fig("No data.")
+
+    df = dfr.copy()
+
+    # --- enforce datetime + sort ---
+    if "date" not in df.columns:
+        return _empty_fig("Missing required column: date")
+
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date"]).sort_values("date")
+
+    # --- required columns ---
+    required = ["equity_net", "bh_equity", "port_ret_net", "weight_XLE", "state_value", "tau_star"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        return _empty_fig(f"Missing required column(s): {', '.join(missing)}")
+
+    # --- numeric coercion ---
+    for c in required + ["signal"]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # --- normalized equities ---
+    df["eq_strat_norm"] = _normalize_to_one(df["equity_net"])
+    df["eq_bh_norm"] = _normalize_to_one(df["bh_equity"])
+
+    # --- forward-fill smooth state series (but not returns/equity) ---
+    df["weight_XLE"] = df["weight_XLE"].ffill()
+    df["state_value"] = df["state_value"].ffill()
+    df["tau_star"] = df["tau_star"].ffill()
+
+    x = df["date"]
+    xmin, xmax = x.min(), x.max()
+
+    if debug:
+        print("[plot] rows:", len(df), "xmin:", xmin, "xmax:", xmax)
+
+    # --- figure scaffold ---
+    fig = make_subplots(
+        rows=4,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.06,
+        row_heights=[0.42, 0.20, 0.18, 0.30],
+        specs=[[{}], [{}], [{}], [{"secondary_y": False}]],
+        subplot_titles=(
+            "XLE Regime State Strategy",
+            "XLE Returns",
+            "Weight (XLE)",
+            "State Value and Threshold τ*",
+        ),
+    )
+
+    # -------------------------
+    # Row 1: equity curves
+    # -------------------------
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=df["eq_bh_norm"],
+            mode="lines",
+            name="Buy & Hold (normalized)",
+            line=dict(dash="dash", color=PAL["bh"], width=2),
+        ),
+        row=1, col=1,
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=df["eq_strat_norm"],
+            mode="lines",
+            name="Strategy (normalized)",
+            line=dict(color=PAL["strategy"], width=3),
+        ),
+        row=1, col=1,
+    )
+
+    # -------------------------
+    # Row 2: returns
+    # -------------------------
+    ret = pd.to_numeric(df["bh_ret"], errors="coerce")
+
+    if returns_as_bars:
+        colors = np.where(ret.fillna(0.0) >= 0, PAL["pos"], PAL["neg"]).tolist()
+        fig.add_trace(
+            go.Bar(
+                x=x,
+                y=ret.fillna(0.0),
+                name="Return (net)",
+                marker_color=colors,
+                opacity=0.85,
+            ),
+            row=2, col=1,
+        )
+    else:
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=ret,
+                mode="lines",
+                name="Return (net)",
+                line=dict(width=2),
+            ),
+            row=2, col=1,
+        )
+
+    # -------------------------
+    # Row 3: weight
+    # -------------------------
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=df["weight_XLE"],
+            mode="lines",
+            name="Weight_XLE",
+            line=dict(color=PAL["weight"], width=2),
+        ),
+        row=3, col=1,
+    )
+
+    # -------------------------
+    # Row 4: state + tau
+    # -------------------------
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=df["state_value"],
+            mode="lines",
+            name="State value",
+            line=dict(color=PAL["state"], width=2),
+        ),
+        row=4, col=1,
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=df["tau_star"],
+            mode="lines",
+            name="τ*",
+            line=dict(color=PAL["tau"], width=2, dash="dot"),
+        ),
+        row=4, col=1,
+    )
+
+    # -------------------------
+    # Axis formatting
+    # -------------------------
+    fig.update_xaxes(range=[xmin, xmax], autorange=False, showgrid=True, zeroline=False)
+    fig.update_xaxes(
+        tickmode="linear",
+        dtick="M3",
+        tickformat="%Y-%m",
+        showticklabels=True,
+        automargin=True,
+        row=4,
+        col=1,
+    )
+    fig.update_xaxes(showticklabels=False, row=1, col=1)
+    fig.update_xaxes(showticklabels=False, row=2, col=1)
+    fig.update_xaxes(showticklabels=False, row=3, col=1)
+
+    # -------------------------
+    # Stable y-ranges
+    # -------------------------
+    eq_all = pd.concat([df["eq_bh_norm"], df["eq_strat_norm"]]).dropna()
+    if not eq_all.empty:
+        y1_min, y1_max = float(eq_all.min()), float(eq_all.max())
+        pad = 0.02 * (y1_max - y1_min) if y1_max > y1_min else 0.02
+        fig.update_yaxes(range=[y1_min - pad, y1_max + pad], autorange=False, row=1, col=1)
+
+    if ret.notna().any():
+        rmax = float(ret.abs().max())
+        pad = 0.05 * rmax if rmax > 0 else 0.01
+        fig.update_yaxes(range=[-(rmax + pad), (rmax + pad)], autorange=False, row=2, col=1)
+
+    w = pd.to_numeric(df["weight_XLE"], errors="coerce")
+    if w.notna().any():
+        wmin, wmax = float(w.min()), float(w.max())
+        pad = 0.05 * (wmax - wmin) if wmax > wmin else 0.05
+        fig.update_yaxes(range=[wmin - pad, wmax + pad], autorange=False, row=3, col=1)
+
+    sv = pd.to_numeric(df["state_value"], errors="coerce")
+    tv = pd.to_numeric(df["tau_star"], errors="coerce")
+    combo = pd.concat([sv, tv]).dropna()
+
+    if not combo.empty:
+        vmin, vmax = float(combo.min()), float(combo.max())
+        pad = 0.05 * (vmax - vmin) if vmax > vmin else 0.01
+        fig.update_yaxes(range=[vmin - pad, vmax + pad], autorange=False, row=4, col=1)
+
+    # -------------------------
+    # Regime shading
+    # -------------------------
+    _add_regime_shading(fig, df, xcol="date", signal_col="signal")
+
+    # -------------------------
+    # Legend note for shading
+    # -------------------------
+    fig.add_annotation(
+        xref="paper",
+        yref="paper",
+        x=1.0,
+        y=1.05,
+        text=(
+            "<span style='color:rgba(34,197,94,0.55)'>■</span> Low Regime (State Variable <= τ*) "
+            "&nbsp;&nbsp;"
+            "<span style='color:rgba(239,68,68,0.55)'>■</span> High Regime (State Variable > τ*)"
+        ),
+        showarrow=False,
+        align="right",
+    )
+
+    # -------------------------
+    # Layout
+    # -------------------------
+    fig.update_layout(
+        template="plotly_white",
+        height=920,
+        margin=dict(l=20, r=20, t=90, b=40),
+        legend=dict(
+            orientation="h",
+            y=1.02,
+            yanchor="bottom",
+            x=0.0,
+            xanchor="left",
+            font=dict(size=12),
+        ),
+        uirevision=f"run:{run_id}" if run_id else "lock",
+        barmode="relative",
+    )
+
+    fig.update_yaxes(title_text="Equity (norm)", row=1, col=1)
+    fig.update_yaxes(title_text="Return", row=2, col=1)
+    fig.update_yaxes(title_text="Weight", row=3, col=1)
+    fig.update_yaxes(title_text="State value and τ*", row=4, col=1)
+    fig.update_xaxes(title_text="Time", title_standoff=18, row=4, col=1)
+
+    if lock_xticks:
+        fig.update_xaxes(nticks=6)
+
+    return fig

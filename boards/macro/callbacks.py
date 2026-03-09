@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 from dash import Dash, Input, Output, callback, ctx, ALL
 
 from common.plots import fmt
-from .plots import plot_rv_tau_weights_returns_equity_animated
+from .plots import plot_rv_tau_weights_returns_equity_animated, plot_rv_tau_weights_returns_equity
 
 
 def register_callbacks(
@@ -41,35 +41,73 @@ def register_callbacks(
     # ----------------------------
     # What the filters should use (these are the columns in rs)
     # ----------------------------
-    PARAM_COLS = [c for c in ["State Variable", "Weight Allocation Method", "Gamma"] if c in rs.columns]
+    PARAM_COLS = [c for c in ["State Variable", "Weight Allocation Method", "Gamma", "Outlier Handling"] if c in rs.columns]
 
-    # These are just for the stats table (not filtering)
-    RENAME_MAP = {
-        # ---- performance (net) ----
+    PERF_RENAME_MAP = {
         "metric_net_sharpe": "Sharpe",
-        "metric_net_cagr": "CAGR ",
+        "metric_net_cagr": "CAGR",
         "metric_net_max_dd": "Max Drawdown",
-
-        # ---- benchmark comparison ----
         "metric_bh_sharpe": "Sharpe (Buy & Hold)",
         "metric_sharpe_minus_bh": "Sharpe − Buy & Hold",
+        "metric_net_ending_equity": "Ending Equity",
+    }
 
-        # ---- trading behavior ----
+    REGIME_RENAME_MAP = {
         "metric_signal_pct_state_1": "% Time Regime Low",
+        "metric_signal_pct_state_0": "% Time Regime High",
+        "metric_signal_n_turnovers": "Total Turnovers",
         "metric_signal_turnovers_per_year": "Turnovers / Year",
         "metric_signal_avg_hold_state_1": "Avg Low-Regime Duration",
         "metric_signal_avg_hold_state_0": "Avg High-Regime Duration",
     }
 
-    # Optional: renamed list for later
-    TABLE_COLS = [c for c in RENAME_MAP.keys() if c in rs.columns]
+    PERF_TABLE_COLS = [c for c in PERF_RENAME_MAP if c in rs.columns]
+    REGIME_TABLE_COLS = [c for c in REGIME_RENAME_MAP if c in rs.columns]
 
-    def _rows_from_cols(row: pd.Series, cols: List[str], *, key_name: str, rename_map: Dict[str, str] | None = None) -> list[dict]:
+    def format_metric_value(col: str, val):
+        if pd.isna(val):
+            return "-"
+
+        pct_cols = {
+            "metric_net_cagr",
+            "metric_net_max_dd",
+            "metric_signal_pct_state_1",
+            "metric_signal_pct_state_0",
+        }
+
+        if col in pct_cols:
+            print(val)
+            return fmt(val/100, style="pct", decimals=2)
+
+        if "sharpe" in col.lower():
+            return fmt(val, decimals=2)
+
+        if "duration" in col.lower():
+            return fmt(val, decimals=2)
+
+        if "turnover" in col.lower():
+            return fmt(val, decimals=2)
+
+        if "equity" in col.lower():
+            return fmt(val, decimals=2)
+
+        return fmt(val)
+    
+    def _rows_from_cols(
+        row: pd.Series,
+        cols: List[str],
+        *,
+        key_name: str,
+        rename_map: Dict[str, str] | None = None,
+    ) -> list[dict]:
         out = []
         for c in cols:
             if c in row.index:
                 label = rename_map.get(c, c) if rename_map else c
-                out.append({key_name: label, "value": fmt(row.get(c))})
+                out.append({
+                    key_name: label,
+                    "value": format_metric_value(c, row.get(c)),
+                })
         return out
 
 
@@ -94,7 +132,7 @@ def register_callbacks(
         dfr = ts_by_run.get(run_id)
         if dfr is None or dfr.empty:
             return _empty_fig()
-        return plot_rv_tau_weights_returns_equity_animated(dfr, run_id=run_id)
+        return plot_rv_tau_weights_returns_equity(dfr, run_id=run_id)
 
     # ============================================================
     # 1) FILTER DROPDOWNS -> RUN DROPDOWN
@@ -134,47 +172,66 @@ def register_callbacks(
         Output("kpi-sharpe", "children"),
         Output("kpi-cagr", "children"),
         Output("kpi-mdd", "children"),
-        Output("kpi-turnover", "children"),
-        Output("kpi-tau", "children"),
+        Output("kpi-sharpe-diff", "children"),
+        Output("kpi-low-regime", "children"),
+        Output("kpi-turnover-yr", "children"),
+        Output("performance-table", "data"),
+        Output("regime-table", "data"),
         Output("chosen-params-table", "data"),
-        Output("stats-table", "data"),
         Input("run-dd", "value"),
         prevent_initial_call=False,
     )
     def render_run(run_id: str):
         if not run_id:
             ef = _empty_fig()
-            return ef, "-", "-", "-", "-", "-", [], []
+            return ef, "-", "-", "-", "-", "-", "-", [], [], []
 
         run_id = str(run_id)
 
         if run_id not in rs_idx.index:
             ef = _empty_fig()
-            return ef, "-", "-", "-", "-", "-", [], [{"metric": "error", "value": "Run not found"}]
+            return ef, "-", "-", "-", "-", "-", "-", [], [], []
 
         row = rs_idx.loc[run_id]
-
         fig = _cached_fig(run_id)
 
-        # KPIs (fix column names)
-        sharpe = row.get("metric_gross_sharpe", None)
-        cagr = row.get("metric_gross_cagr", None)
-        mdd = row.get("metric_gross_max_dd", None)
-        turnover = row.get("metric_signal_n_turnovers", None)
-        tau_star = row.get("model_tau_star_final", None)
-
-        chosen_params = _rows_from_cols(row, PARAM_COLS, key_name="param")
-        stats_rows = _rows_from_cols(row, TABLE_COLS, key_name="metric", rename_map=RENAME_MAP)
+        sharpe = row.get("metric_net_sharpe")
+        cagr = row.get("metric_net_cagr")
+        mdd = row.get("metric_net_max_dd")
+        sharpe_diff = row.get("metric_sharpe_minus_bh")
+        low_regime = row.get("metric_signal_pct_state_1")
+        turnover_yr = row.get("metric_signal_turnovers_per_year")
 
 
+        performance_rows = _rows_from_cols(
+            row,
+            PERF_TABLE_COLS,
+            key_name="metric",
+            rename_map=PERF_RENAME_MAP,
+        )
+
+        regime_rows = _rows_from_cols(
+            row,
+            REGIME_TABLE_COLS,
+            key_name="metric",
+            rename_map=REGIME_RENAME_MAP,
+        )
+
+        chosen_params = _rows_from_cols(
+            row,
+            PARAM_COLS,
+            key_name="param",
+        )
 
         return (
             fig,
             fmt(sharpe, decimals=2),
             fmt(cagr, style="pct", decimals=2),
             fmt(mdd, style="pct", decimals=2),
-            fmt(turnover),
-            fmt(tau_star),
+            fmt(sharpe_diff, decimals=2),
+            fmt(low_regime/100, style="pct", decimals=2),
+            fmt(turnover_yr, decimals=2),
+            performance_rows,
+            regime_rows,
             chosen_params,
-            stats_rows,
         )

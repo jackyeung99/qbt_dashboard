@@ -52,14 +52,17 @@ def build_dashboard(ctx):
     rs = rs.rename(columns={
         "params_state_var": "State Variable",
         "params_weight_allocation": "Weight Allocation Method",
-        "params_gamma": "Gamma"
+        "params_gamma": "Gamma",
+        "params_min_frac": "Outlier Handling"
     })
-    
+
+
     # --- Parameter columns to display ---
     param_cols = [
         "State Variable",
         "Weight Allocation Method",
-        "Gamma"
+        "Gamma",
+        "Outlier Handling"
     ]
     param_cols = [c for c in param_cols if c in rs.columns]
 
