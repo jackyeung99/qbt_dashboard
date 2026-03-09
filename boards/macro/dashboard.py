@@ -20,7 +20,7 @@ def build_dashboard(ctx):
       - register_callbacks(app) -> None
     """
     runs_summary, equity_curves = load_data()
-    print(runs_summary.columns)
+
     rs = runs_summary.copy()
     if "run_id" not in rs.columns:
         raise ValueError("runs_summary must contain 'run_id'")
