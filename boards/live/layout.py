@@ -50,7 +50,7 @@ THEME = {
         "max_width": "1900px",
         "kpi_row_cols": "repeat(6, minmax(0, 1fr))",
         "positioning_cols": "repeat(2, minmax(0, 1fr))",
-        "top_grid_cols": "2fr 1.2fr",
+        "top_grid_cols": "1fr",
         "overview_grid_cols": "2fr 1fr",
         "etf_kpi_cols": "repeat(4, minmax(0, 1fr))",
         "etf_detail_cols": "2fr 1fr",
@@ -222,7 +222,15 @@ def panel_card(title: str, body_id: str, body_text: str, *, min_height: str) -> 
     )
 
 
-def build_layout(*, title: str = "Live Portfolio", subtitle: str | None = None):
+def build_layout(  
+                *, 
+                title: str = "Live Portfolio",
+                subtitle: str | None = None,
+                etf_options: list[dict] | None = None,
+                default_etf: str | None = None):
+
+
+
     c = THEME["colors"]
     f = THEME["font"]
     s = THEME["space"]
@@ -279,6 +287,120 @@ def build_layout(*, title: str = "Live Portfolio", subtitle: str | None = None):
                 ],
             ),
 
+            
+
+            html.Div(
+                style={
+                    "display": "grid",
+                    "gap": s["section_gap"],
+                    "marginBottom": s["section_gap"],
+                },
+                children=[
+                    section_card(
+                        "Volatility Regime Strategy",
+                        [
+                            dcc.Markdown(
+                                """
+
+This strategy is based on the idea that asset returns behave differently across volatility regimes.  
+We use volatility as a state variable to classify trading days into "favorable" and "unfavorable" environments, and adjust how much we invest accordingly.
+
+The goal is to identify a threshold that separates periods where the asset earns higher risk-adjusted returns from periods where it does not, allowing us to condition investment decisions on the observed volatility regime. 
+
+
+### Realized Volatility
+
+We use intraday realized volatility on day $t$ as a proxy for the asset's latent daily volatility. This is constructed using 5-minute intraday returns up to a fixed cutoff time.
+
+Let $P_{t,i}$ denote the intraday price at interval $i$. Then:
+
+$$
+r_{t,i} = \log\\left(\\frac{P_{t,i}}{P_{t,i-1}}\\right), \\quad
+RV_t = \\sum_i r_{t,i}^2, \\quad
+RVOL_t = \\sqrt{RV_t}.
+$$
+
+This produces a high-frequency, forward-looking estimate of volatility using only information available at time $t$.
+
+
+### Regime Classification
+
+Each day is classified into a volatility regime based on a threshold $\\tau^*$:
+
+$$
+\\text{Regime}_t =
+\\begin{cases}
+\\text{Low Volatility}, & RVOL_t < \\tau^* \\\\
+\\text{High Volatility}, & RVOL_t \\ge \\tau^*
+\\end{cases}
+$$
+
+This classification determines whether the market environment is favorable for taking risk.
+
+
+### Threshold Selection $\\tau^*$
+
+The threshold is estimated using a rolling 2-year training sample.  
+We construct a grid of 100 candidate thresholds $\\{\\tau_1, \\dots, \\tau_{100}\\}$ based on percentiles of realized volatility.
+
+For each candidate $\\tau_j$, we split the training sample into two regimes:
+- Low volatility: $\\{t : RVOL_t < \\tau_j\\}$
+- High volatility: $\\{t : RVOL_t \\ge \\tau_j\\}$
+
+We then align each day $t$ with the next-day return $R_{t+1}$ and compute Sharpe ratios separately within each regime. The optimal threshold is chosen to maximize the difference in risk-adjusted performance:
+
+$$
+\\Delta(\\tau_j) = SR_{\\text{low}}(\\tau_j) - SR_{\\text{high}}(\\tau_j),
+$$
+
+$$
+\\tau^* = \\arg\\max_{\\tau_j} \\Delta(\\tau_j).
+$$
+
+This selects the volatility cutoff that most clearly separates favorable and unfavorable return environments.
+
+The resulting $\\tau^*$ is then held fixed over the subsequent evaluation period, where signals are recomputed daily using updated realized volatility.
+
+### Investment Rule
+
+Once $\\tau^*$ is fixed, we form a daily signal using only information available at time $t$:
+
+$$
+s_t = \\mathbf{1}\\{RVOL_t < \\tau^*\\}
+$$
+
+The signal is then mapped into portfolio weights:
+
+- **Binary allocation**: fully invest or stay in cash  
+- **Mean-variance allocation**: allocate a fraction of capital based on expected returns and risk
+
+For mean-variance, we perform a grid search over allowable exposure levels from $0$ to $w_{\\max}$ and select the allocation that optimizes portfolio performance under the chosen objective.
+
+
+### Multiple Assets
+
+The framework extends naturally to multiple ETFs. For each asset, we compute its own realized volatility signal and threshold.
+
+Portfolio construction then proceeds in two steps:
+1. **Signal layer**: determine which assets are in a favorable regime  
+2. **Allocation layer**: distribute capital across selected assets
+
+In the current implementation, capital is allocated equally across active assets, with each asset receiving up to $1/m$ of total capital when $m$ assets are traded simultaneously.
+
+                                """,
+                                mathjax=True,
+                                style={
+                                    "fontSize": f["body"],
+                                    "lineHeight": 1.6,
+                                    "color": c["text_soft"],
+                                },
+                            )
+                        ],
+                    )
+                ],
+            ),
+
+
             html.Div(
                 style={
                     "display": "grid",
@@ -307,57 +429,6 @@ def build_layout(*, title: str = "Live Portfolio", subtitle: str | None = None):
                             )
                         ],
                     ),
-                    section_card(
-                        "Current Positioning",
-                        [
-                            html.Div(
-                                style={
-                                    "display": "grid",
-                                    "gridTemplateColumns": l["positioning_cols"],
-                                    "gap": s["kpi_gap"],
-                                },
-                                children=[
-                                    kpi_card("Active ETFs", "kpi-active-etfs"),
-                                    kpi_card("Gross Exposure", "kpi-gross-exposure"),
-                                    kpi_card("Net Exposure", "kpi-net-exposure"),
-                                    kpi_card("Cash", "kpi-cash"),
-                                ],
-                            )
-                        ],
-                    ),
-                ],
-            ),
-
-            html.Div(
-                style={
-                    "display": "grid",
-                    "gap": s["section_gap"],
-                    "marginBottom": s["section_gap"],
-                },
-                children=[
-                    section_card(
-                        "Volatility Regime Strategy",
-                        [
-                            dcc.Markdown(
-                                """
-The core hypothesis of this strategy is that ETF performance can be improved by conditioning on the underlying volatility regime.
-
-We use intraday realized volatility at day $t$ as the volatility proxy for the ETF, computed from 5-minute intraday bars.
-
-### Volatility Proxy
-### Regime Classification
-### Optimal Threshold $\\tau^*$
-### Combining Multiple ETFs
-                                """,
-                                mathjax=True,
-                                style={
-                                    "fontSize": f["body"],
-                                    "lineHeight": 1.6,
-                                    "color": c["text_soft"],
-                                },
-                            )
-                        ],
-                    )
                 ],
             ),
 
@@ -369,17 +440,17 @@ We use intraday realized volatility at day $t$ as the volatility proxy for the E
                     "marginBottom": s["section_gap"],
                 },
                 children=[
-                    panel_card(
-                        "Portfolio Overview",
-                        "equity-fig",
-                        "Reserve space for total portfolio equity / drawdown / performance view",
-                        min_height=l["overview_min_height"],
+                    dcc.Graph(
+                        id="equity-fig",
+                        figure={},
+                        config={"displayModeBar": False},
+                        style={"width": "100%", "height": "100%"},
                     ),
-                    panel_card(
-                        "Allocation & Contribution",
-                        "allocation_placeholder",
-                        "Reserve space for current allocation, sleeve contribution, or weight summary",
-                        min_height=l["overview_min_height"],
+                    dcc.Graph(
+                        id="allocation-fig",
+                        figure={},
+                        config={"displayModeBar": False},
+                        style={"width": "100%", "height": "100%"},
                     ),
                 ],
             ),
@@ -400,8 +471,11 @@ We use intraday realized volatility at day $t$ as the volatility proxy for the E
                             html.Div("", style={"display": "none"}),
                             dcc.Dropdown(
                                 id="etf-selector",
+                                options=etf_options,
+                                value=default_etf,
                                 placeholder="Select ETF",
-                                style={"minWidth": l["dropdown_min_width"]},
+                                clearable=False,
+                                style={"minWidth": "240px"},
                             ),
                         ],
                     ),
@@ -429,18 +503,19 @@ We use intraday realized volatility at day $t$ as the volatility proxy for the E
                             html.Div(
                                 style={**sx_panel(), "minHeight": l["detail_min_height"]},
                                 children=[
-                                    html.Div(
-                                        id="etf_main_placeholder",
-                                        style=sx_placeholder(),
-                                        children="Reserve space for ETF sleeve equity / price overlay / detail view",
-                                    )
+                                    dcc.Graph(
+                                        id="etf-main-fig",
+                                        figure={},
+                                        config={"displayModeBar": False},
+                                        style={"width": "100%", "height": "100%"},
+                                    ),
                                 ],
                             ),
                             html.Div(
                                 style={**sx_panel(), "minHeight": l["detail_min_height"]},
                                 children=[
                                     html.Div(
-                                        id="etf_side_placeholder",
+                                        id="etf-side-fig",
                                         style=sx_placeholder(),
                                         children="Reserve space for regime, state variable, and weight history",
                                     )

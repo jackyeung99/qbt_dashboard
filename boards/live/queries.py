@@ -24,3 +24,23 @@ def load_data(_key=None):
     meta = _get(f"{S3_BASE}/meta.json").json()
 
     return equity, performance, meta
+
+
+def extract_etfs_from_weights(df) -> list[str]:
+    return sorted(
+        col[:-len("_weight")]
+        for col in df.columns
+        if col.endswith("_weight")
+    )
+
+def pick_default_etf(etfs: list[str]) -> str | None:
+    if not etfs:
+        return None
+    if "XLE" in etfs:
+        return "XLE"
+    return etfs[0]
+
+
+def pick_etf_columns(etf: str, df: pd.DataFrame) -> pd.DataFrame:
+    cols = [c for c in df.columns if c.startswith(f"{etf}_") or c in ['session_date']]
+    return df[cols]

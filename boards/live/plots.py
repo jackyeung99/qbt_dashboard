@@ -3,10 +3,8 @@ import pandas as pd
 import numpy as np
 from typing import Optional, Dict, List, Tuple
 import plotly.graph_objects as go
+import plotly.express as px
 from plotly.subplots import make_subplots
-
-
-import plotly.graph_objects as go
 
 
 PAL = {
@@ -69,15 +67,11 @@ def _normalize_to_one(s: pd.Series) -> pd.Series:
     return s / s0
 
 
-def normalize_equity_df(
+def normalize_portfolio(
     equity: pd.DataFrame | pd.Series,
     *,
     date_col: str = "session_date",
     portfolio_value_col: str = "portfolio_value",
-    state_var_col: str = "XLE_rvol",
-    ret_col: str = "ret",
-    bh_ret_col: str = "XLE_ret_cc",
-    weight_col: str = "XLE_weight",
     returns_are_log: bool = True,
 ) -> pd.DataFrame:
     """
@@ -107,45 +101,17 @@ def normalize_equity_df(
         else:
             raise ValueError(f"Missing {portfolio_value_col!r} (and no 'equity' fallback).")
 
-    # coerce core numeric
-    x = _coerce_numeric(
-        x,
-        cols=[portfolio_value_col, weight_col, state_var_col, bh_ret_col, ret_col],
-        ffill=False,
-    )
 
-    x = x.dropna(subset=[date_col, portfolio_value_col]).sort_values(date_col)
-    if x.empty:
-        return x
 
-    # strategy growth from ret_col (optional)
-    if ret_col in x.columns:
-        r = pd.to_numeric(x[ret_col], errors="coerce").fillna(0.0).astype(float)
-        x["strategy_growth"] = np.exp(r) if returns_are_log else (1.0 + r)
-    else:
-        x["strategy_growth"] = np.nan
+    initial_value = float(x[portfolio_value_col].iloc[0])
 
-    # weight + turnover
-    if weight_col in x.columns:
-        x["weight"] = pd.to_numeric(x[weight_col], errors="coerce").ffill().fillna(0.0).astype(float)
-        x["turnover"] = float(x["weight"].diff().abs().sum())
-    else:
-        x["weight"] = np.nan
-        x["turnover"] = 0.0
+    r = x["SPY_ret_cc"].fillna(0.0).astype(float)
 
-    # state variable
-    x["state_var"] = pd.to_numeric(x.get(state_var_col, np.nan), errors="coerce").ffill()
+    x["bh_equity"] = initial_value * np.exp(r.cumsum().shift(fill_value=0))
+    
+    return x 
+    # return x.dropna(subset=['trained_at_utc'])
 
-    # buy & hold equity
-    if bh_ret_col not in x.columns:
-        raise ValueError(f"Buy&Hold return column not found: {bh_ret_col!r}")
-    x["bh_equity"] = _equity_from_returns(x[bh_ret_col], returns_are_log=returns_are_log)
-
-    # normalized curves
-    x["strategy_equity_norm"] = _normalize_to_one(x[portfolio_value_col].astype(float))
-    x["bh_equity_norm"] = _normalize_to_one(x["bh_equity"].astype(float))
-
-    return x.dropna(subset=['trained_at_utc'])
 
 # ============================================================
 # 2) Plot helpers
@@ -262,326 +228,255 @@ def _build_frames(
 # 3) Main plot function
 # ============================================================
 
-def plot_rv_tau_weights_returns_equity_animated(
-    dfr: pd.DataFrame,
+
+
+def get_etf_view(
+    df: pd.DataFrame,
+    etf: str,
     *,
+    date_col: str = "session_date",
+) -> pd.DataFrame:
+    prefix = f"{etf}_"
+
+    etf_cols = [c for c in df.columns if c.startswith(prefix)]
+    if not etf_cols:
+        raise ValueError(f"No columns found for ETF {etf!r}")
+
+    keep = [date_col] + etf_cols if date_col in df.columns else etf_cols
+
+    out = df[keep].copy()
+
+    renamed = {
+        c: c[len(prefix):]
+        for c in etf_cols
+    }
+    out = out.rename(columns=renamed)
+
+    if date_col in out.columns and date_col != "date":
+        out = out.rename(columns={date_col: "date"})
+
+    return out
+
+def plot_rv_tau_weights_returns_equity(
+    base_df: pd.DataFrame,
+    *,
+    etf: str,
     run_id: str | None = None,
-    frame_ms: int = 200,
-    every: int = 1,
-    # column selection (matches your schema)
-    state_var_col: str = "XLE_rvol",
-    ret_col: str = "XLE_ret_cc",
-    bh_ret_col: str = "XLE_ret_cc",
-    weight_col: str = "XLE_weight",
-    returns_are_log: bool = True,
-    # rendering
     returns_as_bars: bool = True,
-    use_webgl: bool = False,
     lock_xticks: bool = True,
-    debug: bool = False,
     pal: Dict[str, str] | None = None,
+    debug: bool = False,
 ) -> go.Figure:
-    
     if pal:
         PAL.update(pal)
 
-    if dfr is None or dfr.empty:
+    if base_df is None or base_df.empty:
         return _empty_fig("No data.")
 
-    # normalize/compute required plot columns from your raw schema
-    df = normalize_equity_df(
-        dfr,
-        state_var_col=state_var_col,
-        ret_col=ret_col,
-        bh_ret_col=bh_ret_col,
-        weight_col=weight_col,
-        returns_are_log=returns_are_log,
-    )
+    try:
+        df = get_etf_view(base_df, etf)
+    except ValueError as e:
+        return _empty_fig(str(e))
 
-    if df.empty:
-        return _empty_fig("No rows after cleaning.")
+    if "date" not in df.columns:
+        return _empty_fig("Missing required column: date")
 
-    # ensure plot-needed columns exist
-    need = {"session_date", "strategy_equity_norm", "bh_equity_norm", "weight", "state_var"}
-    missing = need - set(df.columns)
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date"]).sort_values("date")
+
+    if "ret_cc" in df.columns:
+        ret_col = "ret_cc"
+    elif "ret" in df.columns:
+        ret_col = "ret"
+    else:
+        ret_col = None
+
+    required = ["weight", "_state_var", "_tau_star", ret_col]
+    required = [c for c in required if c is not None]
+    missing = [c for c in required if c not in df.columns]
     if missing:
-        return _empty_fig(f"Missing required columns after normalize: {', '.join(sorted(missing))}")
+        return _empty_fig(f"Missing required column(s): {', '.join(missing)}")
 
-    # (Optional) coerce + ffill continuity for plotting (not returns)
-    df = _coerce_numeric(df, ["strategy_equity_norm", "bh_equity_norm", "weight", "state_var"], ffill=True)
-    if ret_col in df.columns:
-        df = _coerce_numeric(df, [ret_col], ffill=False)
+    numeric_cols = ["weight", "_state_var", "_tau_star", ret_col, "signal", "_w_high", "_w_low"]
+    for c in numeric_cols:
+        if c and c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    x = df["session_date"]
+    df["weight"] = df["weight"].ffill().fillna(0.0)
+    df["_state_var"] = pd.to_numeric(df["_state_var"]).ffill()
+    df["_tau_star"] = pd.to_numeric(df["_tau_star"]).ffill()
+
+    mask = df["_state_var"].notna() & df["_tau_star"].notna()
+
+    df["signal"] = 0
+    df.loc[mask, "signal"] = (df.loc[mask, "_state_var"] > df.loc[mask, "_tau_star"]).astype(int)
+        
+    ret = df[ret_col].fillna(0.0)
+
+    # strategy sleeve return = dynamic weight * ETF return
+    df["strategy_ret"] = df["weight"] * ret
+
+    # buy-and-hold sleeve = invest w_max the whole time
+    if "_w_high" in df.columns:
+        w_max = float(pd.to_numeric(df["_w_high"], errors="coerce").dropna().max())
+    else:
+        w_max = float(pd.to_numeric(df["weight"], errors="coerce").dropna().max())
+
+    if not np.isfinite(w_max):
+        w_max = 0.0
+
+    df["bh_ret"] = w_max * ret
+
+    # equity curves from CC returns
+    df["strategy_equity"] = np.exp(df["strategy_ret"].cumsum().shift(fill_value=0.0))
+    df["bh_equity"] = np.exp(df["bh_ret"].cumsum().shift(fill_value=0.0))
+
+    x = df["date"]
     xmin, xmax = x.min(), x.max()
 
-    if debug:
-        print("\n[plot_debug] rows:", len(df), "xmin:", xmin, "xmax:", xmax)
-        print("[plot_debug] cols:", list(df.columns))
-
-    # figure scaffold
     fig = make_subplots(
         rows=4,
         cols=1,
         shared_xaxes=True,
         vertical_spacing=0.06,
-        row_heights=[0.42, 0.2, 0.18, 0.3],
+        row_heights=[0.42, 0.20, 0.18, 0.30],
         subplot_titles=(
-            f"Normalized Equity (Strategy vs B&H: {bh_ret_col})",
-            f"XLE Returns ({ret_col})" if ret_col in df.columns else "Strategy Returns (missing)",
-            f"Weights / Exposure ({weight_col})",
-            f"State Variable ({state_var_col})",
+            f"{etf} Equity",
+            f"{etf} Returns",
+            f"Weight ({etf})",
+            f"{etf} State Variable and τ*",
         ),
     )
 
-
-
-
-
-    StaticScatter = go.Scattergl if use_webgl else go.Scatter
-    AnimScatter = go.Scatter  # force
-
-    trace_idx = {}
-    sl0 = slice(0, 1)
-    # --- BH (animated) ---
+    # Row 1: derived equities
     fig.add_trace(
-        AnimScatter(
-            x=x.iloc[sl0], y=df["bh_equity_norm"].iloc[sl0],
+        go.Scatter(
+            x=x,
+            y=df["bh_equity"],
             mode="lines",
-            name=f"Buy & Hold ({bh_ret_col})",
-            line=dict(dash="dash", color=PAL["bh"]),
+            name=f"Buy & Hold at w_max={w_max:.2f}",
+            line=dict(dash="dash", color=PAL["bh"], width=2),
         ),
         row=1, col=1,
     )
-    trace_idx["bh"] = len(fig.data) - 1
 
-    # --- Strategy equity (STATIC / full) ---
     fig.add_trace(
-        StaticScatter(
-            x=x, y=df["strategy_equity_norm"],
+        go.Scatter(
+            x=x,
+            y=df["strategy_equity"],
             mode="lines",
-            name="XLE Volatility Strategy (normalized)",
-            line=dict(width=3, color=PAL["strategy"]),
+            name="Strategy sleeve equity",
+            line=dict(color=PAL["strategy"], width=3),
         ),
         row=1, col=1,
     )
-    trace_idx["strategy"] = len(fig.data) - 1
 
-    # --- Returns (animated) ---
-    has_ret = ret_col in df.columns
-    if has_ret:
-        r0 = pd.to_numeric(df[ret_col], errors="coerce").iloc[sl0]
-        if returns_as_bars:
-            r0 = pd.to_numeric(df[ret_col], errors="coerce").iloc[sl0]
-            colors0 = np.where(r0.fillna(0.0) >= 0, PAL["pos"], PAL["neg"]).tolist()
+    # Row 2: raw ETF returns
+    if returns_as_bars:
+        colors = np.where(ret >= 0, PAL["pos"], PAL["neg"]).tolist()
+        fig.add_trace(
+            go.Bar(
+                x=x,
+                y=ret,
+                name="ETF return",
+                marker_color=colors,
+                opacity=0.85,
+            ),
+            row=2, col=1,
+        )
+    else:
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=ret,
+                mode="lines",
+                name="ETF return",
+                line=dict(width=2),
+            ),
+            row=2, col=1,
+        )
 
-            fig.add_trace(
-                go.Bar(
-                    x=x.iloc[sl0],
-                    y=r0,
-                    name="Return",
-                    marker_color=colors0,   # <<< consistent
-                ),
-                row=2, col=1,
-            )
-        else:
-            fig.add_trace(AnimScatter(x=x.iloc[sl0], y=r0, mode="lines", name="Return"), row=2, col=1)
-        trace_idx["ret"] = len(fig.data) - 1
-
-    # --- Weight (animated) ---
+    # Row 3: weight
     fig.add_trace(
-        AnimScatter(
-            x=x.iloc[sl0], y=df["weight"].iloc[sl0],
+        go.Scatter(
+            x=x,
+            y=df["weight"],
             mode="lines",
             name="Weight",
             line=dict(color=PAL["weight"], width=2),
         ),
         row=3, col=1,
     )
-    trace_idx["weight"] = len(fig.data) - 1
 
-    # --- State var (animated) ---
+    if "_w_high" in df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=df["_w_high"],
+                mode="lines",
+                name="w_high",
+                line=dict(color=PAL["tau"], width=1, dash="dot"),
+                opacity=0.7,
+            ),
+            row=3, col=1,
+        )
+
+    if "_w_low" in df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=df["_w_low"],
+                mode="lines",
+                name="w_low",
+                line=dict(color=PAL["tau"], width=1, dash="dot"),
+                opacity=0.7,
+            ),
+            row=3, col=1,
+        )
+
+    # Row 4: state + tau
     fig.add_trace(
-        AnimScatter(
-            x=x.iloc[sl0], y=df["state_var"].iloc[sl0],
+        go.Scatter(
+            x=x,
+            y=df["_state_var"],
             mode="lines",
-            name="State Var",
+            name="State variable",
             line=dict(color=PAL["state"], width=2),
         ),
         row=4, col=1,
     )
-    trace_idx["state"] = len(fig.data) - 1
 
-    # --- Tau* (animated) ---
     fig.add_trace(
-        AnimScatter(
-            x=x.iloc[sl0], y=df["tau_star"].fillna(0).iloc[sl0],
+        go.Scatter(
+            x=x,
+            y=df["_tau_star"],
             mode="lines",
-            name="Tau*",
-            line=dict(color=PAL["tau"], width=2),
+            name="τ*",
+            line=dict(color=PAL["tau"], width=2, dash="dot"),
         ),
         row=4, col=1,
     )
-    trace_idx["tau"] = len(fig.data) - 1
-    # axis locks
+
+    if "signal" in df.columns:
+        _add_regime_shading(fig, df, xcol="date", signal_col="signal")
+
     fig.update_xaxes(range=[xmin, xmax], autorange=False, showgrid=True, zeroline=False)
     fig.update_xaxes(
-        tickmode="linear", dtick="M3", tickformat="%Y-%m",
-        showticklabels=True, automargin=True, row=4, col=1
+        tickmode="linear",
+        dtick="M3",
+        tickformat="%Y-%m",
+        showticklabels=True,
+        automargin=True,
+        row=4,
+        col=1,
     )
     fig.update_xaxes(showticklabels=False, row=1, col=1)
     fig.update_xaxes(showticklabels=False, row=2, col=1)
     fig.update_xaxes(showticklabels=False, row=3, col=1)
 
-    # y ranges (hard lock)
-    eq_all = pd.concat([df["bh_equity_norm"], df["strategy_equity_norm"]]).dropna()
-    if not eq_all.empty:
-        y1_min, y1_max = float(eq_all.min()), float(eq_all.max())
-    else:
-        y1_min, y1_max = 0.95, 1.05
-    y1_pad = 0.02 * (y1_max - y1_min) if y1_max > y1_min else 0.02
-    fig.update_yaxes(range=[y1_min - y1_pad, y1_max + y1_pad], autorange=False, row=1, col=1)
-
-    if has_ret:
-        r = pd.to_numeric(df[ret_col], errors="coerce")
-        if r.notna().any():
-            rmax = float(r.abs().max())
-            rpad = 0.05 * rmax if rmax > 0 else 0.01
-            fig.update_yaxes(range=[-(rmax + rpad), (rmax + rpad)], autorange=False, row=2, col=1)
-        else:
-            fig.update_yaxes(autorange=False, row=2, col=1)
-    else:
-        fig.update_yaxes(autorange=False, row=2, col=1)
-
-    w = pd.to_numeric(df["weight"], errors="coerce")
-    if w.notna().any():
-        wmin, wmax = float(w.min()), float(w.max())
-        wpad = 0.05 * (wmax - wmin) if wmax > wmin else 0.05
-        fig.update_yaxes(range=[wmin - wpad, wmax + wpad], autorange=False, row=3, col=1)
-
-    sv = pd.to_numeric(df["state_var"], errors="coerce")
-    t_star = pd.to_numeric(df["tau_star"], errors="coerce")
-
-    # combine both
-    combined = pd.concat([sv, t_star]).dropna()
-
-    if not combined.empty:
-        vmin, vmax = float(combined.min()), float(combined.max())
-        vpad = 0.05 * (vmax - vmin) if vmax > vmin else 0.01
-
-        fig.update_yaxes(
-            range=[vmin - vpad, vmax + vpad],
-            autorange=False,
-            row=4, col=1,
-        )
-
-    fig.update_layout(
-        uirevision=f"run:{run_id}" if run_id else "lock",
-        yaxis=dict(autorange=False, fixedrange=True),
-        yaxis2=dict(autorange=False, fixedrange=True),
-        yaxis3=dict(autorange=False, fixedrange=True),
-        yaxis4=dict(autorange=False, fixedrange=True),
-    )
-
-    if lock_xticks:
-        fig.update_xaxes(nticks=6)
-
-    # optional regime shading
-    _add_regime_shading(fig, df, xcol="session_date", signal_col="weight")
-
-    # frames: update only the traces in the order they were added
-    series = [
-        ("line", "bh_equity_norm", "bh"),
-        ("line", "strategy_equity_norm", "strategy"),
-    ]
-    if has_ret:
-        series.append(("bar" if returns_as_bars else "line", ret_col, "ret"))
-    series += [
-        ("line", "weight", "weight"),
-        ("line", "state_var", "state"),
-    ]
-
-    # Which traces to animate (NOT including "strategy")
-    animate_keys = ["bh"] + (["ret"] if has_ret else []) + ["weight", "state", "tau"]
-    animate_traces = [trace_idx[k] for k in animate_keys]
-
-    FrameScatter =  go.Scatter
-
-    frames = []
-    timeline = []
-
-    for i in range(0, len(df), every):
-        sl = slice(0, i + 1)
-        timeline.append(df["session_date"].iloc[i])
-
-        frame_data = []
-
-        # BH (animated)
-        frame_data.append(FrameScatter(x=x.iloc[sl], y=df["bh_equity_norm"].iloc[sl], mode="lines"))
-
-        # Returns (animated)
-        if has_ret:
-            r = pd.to_numeric(df[ret_col], errors="coerce").iloc[sl]
-            if returns_as_bars:
-                colors = np.where(r.fillna(0.0) >= 0, PAL["pos"], PAL["neg"]).tolist()
-
-                frame_data.append(
-                    go.Bar(
-                        x=x.iloc[sl],
-                        y=r,
-                        marker_color=colors,   # <<< consistent
-                    )
-                )
-            else:
-                frame_data.append(FrameScatter(x=x.iloc[sl], y=r))
-
-        # Weight (animated)
-        frame_data.append(FrameScatter(x=x.iloc[sl], y=df["weight"].iloc[sl], mode="lines"))
-
-        # State var (animated)
-        frame_data.append(FrameScatter(x=x.iloc[sl], y=df["state_var"].iloc[sl], mode="lines"))
-
-        # Tau* (animated)
-        frame_data.append(FrameScatter(x=x.iloc[sl], y=df["tau_star"].fillna(0).iloc[sl], mode="lines"))
-
-        frames.append(go.Frame(
-            name=str(len(frames)),
-            data=frame_data,
-            traces=animate_traces,   # aligns 1:1 with frame_data order above
-        ))
-
-    fig.frames = frames
-
-
-    # --- regime legend entries (add AFTER frames so trace indices don't shift) ---
-    fig.add_trace(
-        go.Scatter(
-            x=[None], y=[None],
-            mode="markers",
-            marker=dict(size=10, color="rgba(34,197,94,0.25)"),
-            name="Regime: Buy",
-            showlegend=True,
-            hoverinfo="skip",
-        ),
-        row=1, col=1,
-    )
-
-    fig.add_trace(
-        go.Scatter(
-            x=[None], y=[None],
-            mode="markers",
-            marker=dict(size=10, color="rgba(239,68,68,0.25)"),
-            name="Regime: No-Buy",
-            showlegend=True,
-            hoverinfo="skip",
-        ),
-        row=1, col=1,
-    )
-
-    # controls
     fig.update_layout(
         template="plotly_white",
-        height=940,
+        height=920,
         margin=dict(l=20, r=20, t=90, b=40),
         legend=dict(
             orientation="h",
@@ -591,85 +486,85 @@ def plot_rv_tau_weights_returns_equity_animated(
             xanchor="left",
             font=dict(size=12),
         ),
-        updatemenus=[
-            dict(
-                type="buttons",
-                direction="left",
-                x=0.0,
-                y=1.25,
-                xanchor="left",
-                yanchor="top",
-                showactive=False,
-                pad=dict(t=4, r=12),
-                bgcolor="#1f2937",
-                bordercolor="#111827",
-                borderwidth=1,
-                font=dict(size=14, color="white"),
-                buttons=[
-                    dict(
-                        label="Play",
-                        method="animate",
-                        args=[
-                            None,
-                            dict(
-                                frame=dict(duration=frame_ms, redraw=True),
-                                transition=dict(duration=0),
-                                fromcurrent=True,
-                                mode="immediate",
-                            ),
-                        ],
-                    ),
-                    dict(
-                        label="Pause",
-                        method="animate",
-                        args=[
-                            [None],
-                            dict(
-                                frame=dict(duration=0, redraw=False),
-                                transition=dict(duration=0),
-                                mode="immediate",
-                            ),
-                        ],
-                    ),
-                ],
-            )
-        ],
-        sliders=[
-            dict(
-                x=0.0,
-                y=1.20,
-                xanchor="left",
-                yanchor="top",
-                len=1.0,
-                active=max(len(timeline) - 1, 0),
-                pad=dict(t=10, b=0),
-                currentvalue=dict(prefix="Date: ", font=dict(size=12)),
-                steps=[
-                    dict(
-                        method="animate",
-                        label=str(t)[:10],
-                        args=[
-                            [str(i)],
-                            dict(
-                                frame=dict(duration=0, redraw=False),
-                                transition=dict(duration=0),
-                                mode="immediate",
-                            ),
-                        ],
-                    )
-                    for i, t in enumerate(timeline)
-                ],
-            )
-        ],
+        uirevision=f"run:{run_id}" if run_id else "lock",
+        barmode="relative",
     )
 
-    fig.update_yaxes(title_text="Equity (Normalized)", row=1, col=1)
-    fig.update_yaxes(title_text="Return", row=2, col=1)
+    fig.update_yaxes(title_text="Equity", row=1, col=1)
+    fig.update_yaxes(title_text="ETF return", row=2, col=1)
     fig.update_yaxes(title_text="Weight", row=3, col=1)
-    fig.update_yaxes(title_text="State Variable", row=4, col=1)
+    fig.update_yaxes(title_text="State / τ*", row=4, col=1)
     fig.update_xaxes(title_text="Time", title_standoff=18, row=4, col=1)
 
-    if debug:
-        print("[plot_debug] frames:", len(timeline), "every:", every, "frame_ms:", frame_ms)
+    if lock_xticks:
+        fig.update_xaxes(nticks=6)
+
+    return fig
+
+
+def plot_portfolio(dfr: pd.DataFrame):
+
+    fig = px.line(
+        dfr,
+        x="session_date",
+        y=["portfolio_value", "bh_equity"],  # <- multiple series
+        title="Portfolio vs Buy & Hold"
+    )
+
+    return fig
+
+
+
+def get_allocation_with_cash(df: pd.DataFrame) -> pd.Series:
+    weight_cols = [c for c in df.columns if c.endswith("_weight")]
+    if not weight_cols:
+        return pd.Series(dtype=float)
+
+    w = df[weight_cols].iloc[-1].fillna(0.0).astype(float)
+    w.index = [c[:-len("_weight")] for c in weight_cols]
+
+    invested = float(w.sum())
+    cash = max(0.0, 1.0 - invested)
+
+    if cash > 0:
+        w.loc["Cash"] = cash
+
+    return w
+
+def plot_allocation_pie(df: pd.DataFrame):
+    alloc = get_allocation_with_cash(df)
+    alloc = alloc[alloc > 0]
+
+    fig = px.pie(
+        values=alloc.values,
+        names=alloc.index,
+        title="Current Allocation",
+    )
+
+    fig.update_traces(
+        textinfo="label+percent",
+        hovertemplate="%{label}<br>%{value:.2%}<extra></extra>",
+    )
+
+    return fig
+
+
+def plot_allocation_bar(df: pd.DataFrame):
+    alloc = get_allocation_with_cash(df)
+
+    fig = px.bar(
+        x=alloc.index,
+        y=alloc.values,
+        title="Current Allocation",
+    )
+
+    fig.update_traces(
+        hovertemplate="%{x}<br>%{y:.2%}<extra></extra>"
+    )
+
+    fig.update_layout(
+        yaxis_tickformat=".0%",
+        margin=dict(l=20, r=20, t=40, b=20),
+    )
 
     return fig

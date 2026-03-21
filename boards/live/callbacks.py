@@ -7,8 +7,9 @@ import pandas as pd
 import numpy as np
 
 from common.plots import fmt
-from .plots import normalize_equity_df, plot_rv_tau_weights_returns_equity_animated
+from .plots import *
 from common.helpers import format_et
+from .queries import extract_etfs_from_weights, pick_default_etf, pick_etf_columns
 
 
 # -----------------------
@@ -20,6 +21,13 @@ def pick_metric(d: Mapping[str, Any], *keys: str, default=np.nan):
             return d[k]
     return default
 
+def resolve_selected_etf(selected_etf: str | None, df: pd.DataFrame) -> str | None:
+    etfs = extract_etfs_from_weights(df)
+    if not etfs:
+        return None
+    if selected_etf in etfs:
+        return selected_etf
+    return pick_default_etf(etfs)
 
 
 def compute_kpis(
@@ -85,6 +93,7 @@ def compute_kpis(
 def register_callbacks(app: Dash, *, load_live_data) -> None:
     @callback(
         Output("equity-fig", "figure"),
+        Output("allocation-fig", "figure"),
         Output("generated_at", "children"),
         Output("kpi-total-pnl", "children"),
         Output("kpi-sharpe", "children"),
@@ -98,31 +107,23 @@ def register_callbacks(app: Dash, *, load_live_data) -> None:
     def render_live(_pathname):
         try:
             equity_raw, performance, meta = load_live_data()
-            # print(equity_raw.head())
-            # print(equity_raw.tail())
-
-            print(equity_raw['assets'])
-    
-
             # normalize + plot
-            # equity = normalize_equity_df(equity_raw)
-            equity = equity_raw
+            equity = normalize_portfolio(equity_raw)
 
+            fig = plot_portfolio(equity)
+            allocation_fig = plot_allocation_pie(equity)
 
-            # fig = plot_rv_tau_weights_returns_equity_animated(equity)
-            fig = go.Figure()
-        
-            # if equity.empty:
-            #     return fig, "-", "-", "-", "-", "-"
+            if equity.empty:
+                return fig, "-", "-", "-", "-", "-", "-", "-"
 
 
             # KPIs
             k = compute_kpis(equity, performance=performance, meta=meta)
             
-            # print(meta['generated_at_utc'])
-            # print(meta)
+
             return (
                 fig,
+                allocation_fig,
                 format_et(meta['generated_at_utc']),
                 fmt(k['total_pnl'], decimals=2),
                 fmt(k["sharpe"], decimals=2),
@@ -139,4 +140,33 @@ def register_callbacks(app: Dash, *, load_live_data) -> None:
                 xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False
             )
             fig.update_layout(template="plotly_white")
-            return fig, "ERR", "ERR", "ERR", "ERR", "ERR", "ERR", "ERR"
+            return fig, fig,  "ERR", "ERR", "ERR", "ERR", "ERR", "ERR", "ERR"
+
+
+
+
+
+    @callback(
+        Output("etf-kpi-return", "children"),
+        Output("etf-kpi-sharpe", "children"),
+        Output("etf-kpi-regime", "children"),
+        Output("etf-kpi-weight", "children"),
+        Output("etf-main-fig", "figure"),
+        Output("etf-side-fig", "figure"),
+        Input("etf-selector", "value"),
+    )
+    def update_etf_drilldown(selected_etf):
+        equity_raw, performance, meta = load_live_data()
+        equity = normalize_portfolio(equity_raw)
+
+        if equity is None or equity.empty:
+            return "-", "-", "-", "-", {}, {}
+
+        etf = resolve_selected_etf(selected_etf, equity)
+
+        if etf is None:
+            return "-", "-", "-", "-", {}, {}
+   
+        fig = plot_rv_tau_weights_returns_equity(equity, etf=etf)
+
+        return"-", "-", "-", "-", fig, {}
