@@ -100,7 +100,9 @@ def register_callbacks(app: Dash, *, load_live_data) -> None:
             equity_raw, performance, meta = load_live_data()
             # print(equity_raw.head())
             # print(equity_raw.tail())
- 
+
+            print(equity_raw['assets'])
+    
 
             # normalize + plot
             # equity = normalize_equity_df(equity_raw)
