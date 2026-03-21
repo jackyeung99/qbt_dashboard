@@ -33,19 +33,16 @@ def compute_kpis(
     meta = dict(meta or {})
 
     # Prefer performance.json KPIs (flexible key names)
-    sharpe_p = pick_metric(performance, "sharpe", "sharpe_ratio", "strat_sharpe")
-    cagr_p = pick_metric(performance, "cagr", "CAGR", "ann_return", "annualized_return")
-    mdd_p = pick_metric(performance, "max_drawdown", "mdd", "maxDD", "strat_max_drawdown")
-    mean_returns = pick_metric(performance, "mean_daily")
-    return_vol = pick_metric(performance, "vol_daily",)
+    sharpe_p = pick_metric(performance, "gross_sharpe", "sharpe", "sharpe_ratio", "strat_sharpe")
+    cagr_p = pick_metric(performance, "gross_cagr","cagr", "CAGR", "ann_return", "annualized_return")
+    mdd_p = pick_metric(performance, "gross_max_dd", "max_drawdown", "mdd", "maxDD", "strat_max_drawdown")
+    mean_returns = pick_metric(performance, "gross_mean_ann", "gross_mean_daily")
+    return_vol = pick_metric(performance, "gross_vol_ann",)
 
-    tau_star = None
-
-    if tau_star is None or (isinstance(tau_star, float) and np.isnan(tau_star)):
-        tau_star = pick_metric(meta, "tau_star", default=np.nan)
 
     # Fallbacks from equity series if missing
     pv = equity["portfolio_value"].astype(float)
+
 
     # Sharpe fallback
     if (sharpe_p is None) or (not np.isfinite(float(sharpe_p))):
@@ -70,8 +67,10 @@ def compute_kpis(
     else:
         mdd = float(mdd_p)
 
-
+    total_pnl = equity["portfolio_value"].iloc[-1] - equity["portfolio_value"].iloc[0] 
+  
     return {
+        "total_pnl": total_pnl,
         "sharpe": sharpe,
         "cagr": cagr,
         "mdd": mdd,
@@ -87,6 +86,7 @@ def register_callbacks(app: Dash, *, load_live_data) -> None:
     @callback(
         Output("equity-fig", "figure"),
         Output("generated_at", "children"),
+        Output("kpi-total-pnl", "children"),
         Output("kpi-sharpe", "children"),
         Output("kpi-cagr", "children"),
         Output("kpi-mdd", "children"),
@@ -100,23 +100,29 @@ def register_callbacks(app: Dash, *, load_live_data) -> None:
             equity_raw, performance, meta = load_live_data()
             # print(equity_raw.head())
             # print(equity_raw.tail())
+ 
 
-        
             # normalize + plot
-            equity = normalize_equity_df(equity_raw)
+            # equity = normalize_equity_df(equity_raw)
+            equity = equity_raw
 
 
-            fig = plot_rv_tau_weights_returns_equity_animated(equity)
+            # fig = plot_rv_tau_weights_returns_equity_animated(equity)
+            fig = go.Figure()
+        
+            # if equity.empty:
+            #     return fig, "-", "-", "-", "-", "-"
 
-            if equity.empty:
-                return fig, "-", "-", "-", "-", "-"
 
             # KPIs
             k = compute_kpis(equity, performance=performance, meta=meta)
-
+            
+            # print(meta['generated_at_utc'])
+            # print(meta)
             return (
                 fig,
                 format_et(meta['generated_at_utc']),
+                fmt(k['total_pnl'], decimals=2),
                 fmt(k["sharpe"], decimals=2),
                 fmt(k["cagr"], style="pct", decimals=2),
                 fmt(k["mdd"], style="pct", decimals=2),
@@ -131,4 +137,4 @@ def register_callbacks(app: Dash, *, load_live_data) -> None:
                 xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False
             )
             fig.update_layout(template="plotly_white")
-            return fig, "ERR", "ERR", "ERR", "ERR", "ERR"
+            return fig, "ERR", "ERR", "ERR", "ERR", "ERR", "ERR", "ERR"

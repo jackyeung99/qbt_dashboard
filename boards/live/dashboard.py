@@ -17,7 +17,7 @@ def _daily_key():
     # changes once per day (in your timezone)
     return datetime.now(TZ).strftime("%Y-%m-%d")
 
-
+ 
 def build_dashboard(ctx) -> Dict[str, Any]:
     """
     Registry entrypoint.
@@ -27,16 +27,16 @@ def build_dashboard(ctx) -> Dict[str, Any]:
       - layout() -> Dash Component
       - register_callbacks(app) -> None
     """
-
     # -----------------------------------------
     # Data loader (kept as callable for reuse)
     # -----------------------------------------
+
     def load_live_data() -> Tuple:
         # returns (equity_df, performance_dict, meta_dict)
         return load_data(_daily_key())
 
     def layout() -> Component:
-      return build_layout(title="Live Portfolio", subtitle="XLE StateSignal")
+      return build_layout(title="Live Portfolio")
 
     def _register(app: Dash) -> None:
         register_callbacks(app, load_live_data=load_live_data)

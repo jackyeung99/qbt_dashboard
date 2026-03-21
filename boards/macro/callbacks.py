@@ -76,7 +76,6 @@ def register_callbacks(
         }
 
         if col in pct_cols:
-            print(val)
             return fmt(val/100, style="pct", decimals=2)
 
         if "sharpe" in col.lower():

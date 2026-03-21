@@ -63,7 +63,7 @@ ctx = AppContext(
     env=os.getenv("APP_ENV", "dev"),
     results_root=os.getenv("RESULTS_ROOT", "results")
 )
-app = create_app(ctx, dashboard='macro')
+app = create_app(ctx, dashboard='live')
 server = app.server
 
 if __name__ == "__main__":
