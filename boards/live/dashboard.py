@@ -31,7 +31,7 @@ def build_dashboard(ctx) -> Dict[str, Any]:
         return load_data(_daily_key())
 
     def layout() -> Component:
-        equity_df, performance, meta = load_live_data()
+        equity_df, meta = load_live_data()
 
         etfs = extract_etfs_from_weights(equity_df) if equity_df is not None and not equity_df.empty else []
         etf_options = [{"label": etf, "value": etf} for etf in etfs]

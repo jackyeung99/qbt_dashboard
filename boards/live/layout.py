@@ -128,6 +128,7 @@ STRATEGY_CONTENT = [
     ("Multiple Assets", MULTI_ASSET_MD),
 ]
 
+
 def sx_card() -> dict:
     c = THEME["colors"]
     r = THEME["radius"]
@@ -279,18 +280,36 @@ def section_card(title: str, children, *, style: dict | None = None) -> html.Div
         style={**sx_card(), "padding": THEME["space"]["card_pad"], **(style or {})},
         children=[
             html.Div(title, style=sx_section_title()),
-            *children,
+            html.Div(
+                style={
+                    "display": "flex",
+                    "flexDirection": "column",
+                    "gap": THEME["space"]["section_gap"],  
+                },
+                children=children,
+            ),
         ],
     )
 
 
-def panel_card(title: str, body_id: str, body_text: str, *, min_height: str) -> html.Div:
+def graph_panel(graph_id: str, *, min_height: str, figure: dict | None = None) -> html.Div:
     return html.Div(
         style={**sx_panel(), "minHeight": min_height},
         children=[
-            html.Div(title, style=sx_section_title()),
-            html.Div(id=body_id, style=sx_placeholder(), children=body_text),
+            dcc.Graph(
+                id=graph_id,
+                figure=figure or {},
+                config={"displayModeBar": False},
+                style={"width": "100%", "height": "100%"},
+            ),
         ],
+    )
+
+
+def content_panel(panel_id: str, *, min_height: str, padding: str = "14px") -> html.Div:
+    return html.Div(
+        id=panel_id,
+        style={**sx_panel(), "minHeight": min_height, "padding": padding},
     )
 
 
@@ -336,11 +355,7 @@ def strategy_card() -> html.Div:
         "Strategy Methodology",
         [
             html.Div(
-                style={
-                    "display": "flex",
-                    "flexDirection": "column",
-                    "gap": "0px",
-                },
+                style={"display": "flex", "flexDirection": "column", "gap": "0px"},
                 children=[
                     collapsible_section(title, content, open=(i == 0))
                     for i, (title, content) in enumerate(STRATEGY_CONTENT)
@@ -349,6 +364,193 @@ def strategy_card() -> html.Div:
         ],
         style={"marginBottom": THEME["space"]["section_gap"]},
     )
+
+
+def build_header(*, title: str, subtitle: str | None) -> html.Div:
+    c = THEME["colors"]
+    f = THEME["font"]
+    s = THEME["space"]
+
+    return html.Div(
+        style={
+            "padding": s["header_y"],
+            "marginBottom": s["section_gap"],
+            "display": "flex",
+            "justifyContent": "space-between",
+            "alignItems": "flex-start",
+            "gap": s["section_gap"],
+        },
+        children=[
+            html.Div(
+                children=[
+                    html.Div(
+                        title,
+                        style={
+                            "margin": "0",
+                            "fontSize": f["title"],
+                            "fontWeight": 800,
+                            "letterSpacing": "-0.2px",
+                            "color": c["text"],
+                        },
+                    ),
+                    html.Div(
+                        subtitle or "Live monitoring for a multi-ETF volatility regime portfolio.",
+                        style={
+                            "marginTop": s["title_gap"],
+                            "fontSize": f["subtitle"],
+                            "color": c["text_muted"],
+                        },
+                    ),
+                ]
+            ),
+            html.Div(
+                style={
+                    "display": "flex",
+                    "gap": "8px",
+                    "alignItems": "center",
+                    "flexWrap": "wrap",
+                },
+                children=[
+                    info_badge("Live", id="live_status_badge", live=True),
+                    info_badge(id="generated_at"),
+                ],
+            ),
+        ],
+    )
+
+
+def build_portfolio_section() -> html.Div:
+    s = THEME["space"]
+    l = THEME["layout"]
+
+    portfolio_kpis = html.Div(
+        style={
+            "display": "grid",
+            "gridTemplateColumns": l["kpi_row_cols"],
+            "gap": s["kpi_gap"],
+        },
+        children=[
+            kpi_card("Total PNL", "kpi-total-pnl"),
+            kpi_card("Sharpe", "kpi-sharpe"),
+            kpi_card("CAGR", "kpi-cagr"),
+            kpi_card("Max Drawdown", "kpi-mdd"),
+            kpi_card("Volatility", "kpi-return-vol"),
+            kpi_card("Avg. Daily Return", "kpi-mean-return"),
+        ],
+    )
+
+    portfolio_top_row = html.Div(
+        style={
+            "display": "grid",
+            "gridTemplateColumns": l["overview_grid_cols"],
+            "gap": s["section_gap"],
+        },
+        children=[
+            graph_panel("equity-fig", min_height=l["overview_min_height"]),
+            content_panel("portfolio-stats-panel", min_height=l["detail_min_height"]),
+        ],
+    )
+
+    portfolio_bottom_row = html.Div(
+        style={
+            "display": "grid",
+            "gridTemplateColumns": "1fr 1fr",
+            "gap": s["section_gap"],
+        },
+        children=[
+            graph_panel("allocation-fig", min_height=l["overview_min_height"]),
+            graph_panel("weights-stats-panel", min_height=l["overview_min_height"]),
+        ],
+    )
+
+    return html.Div(
+        style={
+            "display": "grid",
+            "gridTemplateColumns": l["top_grid_cols"],
+            "gap": s["section_gap"],
+            "marginBottom": s["section_gap"],
+        },
+        children=[
+            section_card(
+                "Portfolio Performance",
+                [
+                    portfolio_kpis,
+                    portfolio_top_row,
+                    portfolio_bottom_row,
+                ],
+            )
+        ],
+    )
+
+
+def build_asset_section(
+    *,
+    etf_options: list[dict] | None = None,
+    default_etf: str | None = None,
+) -> html.Div:
+    s = THEME["space"]
+    l = THEME["layout"]
+
+    asset_controls = html.Div(
+        style={
+            "display": "flex",
+            "justifyContent": "space-between",
+            "alignItems": "center",
+            "marginBottom": s["section_gap"],
+            "gap": s["section_gap"],
+            "flexWrap": "wrap",
+        },
+        children=[
+            html.Div("", style={"display": "none"}),
+            dcc.Dropdown(
+                id="etf-selector",
+                options=etf_options or [],
+                value=default_etf,
+                placeholder="Select ETF",
+                clearable=False,
+                style={"minWidth": l["dropdown_min_width"]},
+            ),
+        ],
+    )
+
+    asset_kpis = html.Div(
+        style={
+            "display": "grid",
+            "gridTemplateColumns": l["etf_kpi_cols"],
+            "gap": s["kpi_gap"],
+            "marginBottom": s["section_gap"],
+        },
+        children=[
+            kpi_card("ETF Return", "etf-kpi-return"),
+            kpi_card("ETF Sharpe", "etf-kpi-sharpe"),
+            kpi_card("Current Regime", "etf-kpi-regime"),
+            kpi_card("Target Weight", "etf-kpi-weight"),
+        ],
+    )
+
+    asset_detail_row = html.Div(
+        style={
+            "display": "grid",
+            "gridTemplateColumns": l["etf_detail_cols"],
+            "gap": s["section_gap"],
+        },
+        children=[
+            graph_panel("etf-main-fig", min_height=l["detail_min_height"]),
+            content_panel("etf-side-panel", min_height=l["detail_min_height"]),
+        ],
+    )
+
+    return section_card(
+        "Asset Information",
+        [
+            asset_controls,
+            asset_kpis,
+            asset_detail_row,
+        ],
+        style={"marginBottom": s["section_gap"]},
+    )
+
+
 def build_layout(
     *,
     title: str = "Live Portfolio",
@@ -356,210 +558,24 @@ def build_layout(
     etf_options: list[dict] | None = None,
     default_etf: str | None = None,
 ):
-    c = THEME["colors"]
-    f = THEME["font"]
     s = THEME["space"]
-    l = THEME["layout"]
 
     return page_shell(
         [
             dcc.Location(id="url"),
-
-            html.Div(
-                style={
-                    "padding": s["header_y"],
-                    "marginBottom": s["section_gap"],
-                    "display": "flex",
-                    "justifyContent": "space-between",
-                    "alignItems": "flex-start",
-                    "gap": s["section_gap"],
-                },
-                children=[
-                    html.Div(
-                        children=[
-                            html.Div(
-                                title,
-                                style={
-                                    "margin": "0",
-                                    "fontSize": f["title"],
-                                    "fontWeight": 800,
-                                    "letterSpacing": "-0.2px",
-                                    "color": c["text"],
-                                },
-                            ),
-                            html.Div(
-                                subtitle or "Live monitoring for a multi-ETF volatility regime portfolio.",
-                                style={
-                                    "marginTop": s["title_gap"],
-                                    "fontSize": f["subtitle"],
-                                    "color": c["text_muted"],
-                                },
-                            ),
-                        ]
-                    ),
-                    html.Div(
-                        style={
-                            "display": "flex",
-                            "gap": "8px",
-                            "alignItems": "center",
-                            "flexWrap": "wrap",
-                        },
-                        children=[
-                            info_badge("Live", id="live_status_badge", live=True),
-                            info_badge(id="generated_at"),
-                        ],
-                    ),
-                ],
-            ),
-
+            build_header(title=title, subtitle=subtitle),
             html.Div(
                 style={
                     "display": "grid",
                     "gap": s["section_gap"],
                     "marginBottom": s["section_gap"],
                 },
-                children=[
-                    strategy_card(),
-                ],
+                children=[strategy_card()],
             ),
-
-            html.Div(
-                style={
-                    "display": "grid",
-                    "gridTemplateColumns": l["top_grid_cols"],
-                    "gap": s["section_gap"],
-                    "marginBottom": s["section_gap"],
-                },
-                children=[
-                    section_card(
-                        "Portfolio Performance",
-                        [
-                            html.Div(
-                                style={
-                                    "display": "grid",
-                                    "gridTemplateColumns": l["kpi_row_cols"],
-                                    "gap": s["kpi_gap"],
-                                },
-                                children=[
-                                    kpi_card("Total PNL", "kpi-total-pnl"),
-                                    kpi_card("Sharpe", "kpi-sharpe"),
-                                    kpi_card("CAGR", "kpi-cagr"),
-                                    kpi_card("Max Drawdown", "kpi-mdd"),
-                                    kpi_card("Volatility", "kpi-return-vol"),
-                                    kpi_card("Avg. Daily Return", "kpi-mean-return"),
-                                ],
-                            )
-                        ],
-                    ),
-                ],
-            ),
-            html.Div(
-                style={
-                    "display": "grid",
-                    "gap": s["section_gap"],
-                    "marginBottom": s["section_gap"],
-                },
-                children=[
-                    section_card(
-                        "",
-                        [
-                            html.Div(
-                                style={
-                                    "display": "grid",
-                                    "gridTemplateColumns": l["overview_grid_cols"],  # e.g. "2fr 1fr"
-                                    "gap": s["section_gap"],
-                                },
-                                children=[
-                                    dcc.Graph(
-                                        id="equity-fig",
-                                        figure={},
-                                        config={"displayModeBar": False},
-                                        style={"width": "100%", "height": "420px"},
-                                    ),
-                                    dcc.Graph(
-                                        id="allocation-fig",
-                                        figure={},
-                                        config={"displayModeBar": False},
-                                        style={"width": "100%", "height": "420px"},
-                                    ),
-                                ],
-                            )
-                        ],
-                    )
-                ],
-            ),
-        
-
-            section_card(
-                "ETF Drilldown",
-                [
-                    html.Div(
-                        style={
-                            "display": "flex",
-                            "justifyContent": "space-between",
-                            "alignItems": "center",
-                            "marginBottom": s["section_gap"],
-                            "gap": s["section_gap"],
-                            "flexWrap": "wrap",
-                        },
-                        children=[
-                            html.Div("", style={"display": "none"}),
-                            dcc.Dropdown(
-                                id="etf-selector",
-                                options=etf_options or [],
-                                value=default_etf,
-                                placeholder="Select ETF",
-                                clearable=False,
-                                style={"minWidth": l["dropdown_min_width"]},
-                            ),
-                        ],
-                    ),
-                    html.Div(
-                        style={
-                            "display": "grid",
-                            "gridTemplateColumns": l["etf_kpi_cols"],
-                            "gap": s["kpi_gap"],
-                            "marginBottom": s["section_gap"],
-                        },
-                        children=[
-                            kpi_card("ETF Return", "etf-kpi-return"),
-                            kpi_card("ETF Sharpe", "etf-kpi-sharpe"),
-                            kpi_card("Current Regime", "etf-kpi-regime"),
-                            kpi_card("Target Weight", "etf-kpi-weight"),
-                        ],
-                    ),
-                    html.Div(
-                        style={
-                            "display": "grid",
-                            "gridTemplateColumns": l["etf_detail_cols"],
-                            "gap": s["section_gap"],
-                        },
-                        children=[
-                            html.Div(
-                                style={**sx_panel(), "minHeight": l["detail_min_height"]},
-                                children=[
-                                    dcc.Graph(
-                                        id="etf-main-fig",
-                                        figure={},
-                                        config={"displayModeBar": False},
-                                        style={"width": "100%", "height": "100%"},
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                style={**sx_panel(), "minHeight": l["detail_min_height"]},
-                                children=[
-                                    html.Div(
-                                        id="etf-side-fig",
-                                        style=sx_placeholder(),
-                                        children="Reserve space for regime, state variable, and weight history",
-                                    )
-                                ],
-                            ),
-                        ],
-                    ),
-                ],
-                style={"marginBottom": s["section_gap"]},
+            build_portfolio_section(),
+            build_asset_section(
+                etf_options=etf_options,
+                default_etf=default_etf,
             ),
         ]
     )
