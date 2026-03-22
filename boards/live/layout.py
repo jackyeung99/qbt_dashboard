@@ -61,6 +61,73 @@ THEME = {
 }
 
 
+STRATEGY_OVERVIEW_MD = """
+This strategy is based on the idea that asset returns behave differently across volatility regimes.  
+We use volatility as a state variable to classify trading days into favorable and unfavorable environments, and adjust how much we invest accordingly.
+
+The goal is to identify a threshold that separates periods where the asset earns higher risk-adjusted returns from periods where it does not, allowing us to condition investment decisions on the observed volatility regime.
+"""
+
+REALIZED_VOL_MD = r"""
+We use intraday realized volatility on day $t$ as a proxy for the asset's latent daily volatility...
+
+$$
+r_{t,i} = \log\left(\frac{P_{t,i}}{P_{t,i-1}}\right), \quad
+RV_t = \sum_i r_{t,i}^2, \quad
+RVOL_t = \sqrt{RV_t}.
+$$
+"""
+
+REGIME_CLASSIFICATION_MD = r"""
+Each day is classified into a volatility regime based on a threshold $\tau^*$:
+
+$$
+\text{Regime}_t =
+\begin{cases}
+\text{Low Volatility}, & RVOL_t < \tau^* \\
+\text{High Volatility}, & RVOL_t \ge \tau^*
+\end{cases}
+$$
+"""
+
+THRESHOLD_SELECTION_MD = r"""
+The threshold is estimated using a rolling 2-year training sample...
+
+$$
+\Delta(\tau_j) = SR_{\text{low}}(\tau_j) - SR_{\text{high}}(\tau_j),
+$$
+
+$$
+\tau^* = \arg\max_{\tau_j} \Delta(\tau_j).
+$$
+"""
+
+INVESTMENT_RULE_MD = r"""
+Once $\tau^*$ is fixed:
+
+$$
+s_t = \mathbf{1}\{RVOL_t < \tau^*\}
+$$
+
+- Binary allocation  
+- Mean-variance allocation (grid search from $0$ to $w_{\max}$)
+"""
+
+MULTI_ASSET_MD = r"""
+The framework extends naturally to multiple ETFs...
+
+Each asset receives up to $1/m$ of capital when $m$ assets are active.
+"""
+
+STRATEGY_CONTENT = [
+    ("Strategy Overview", STRATEGY_OVERVIEW_MD),
+    ("Realized Volatility", REALIZED_VOL_MD),
+    ("Regime Classification", REGIME_CLASSIFICATION_MD),
+    ("Threshold Selection τ*", THRESHOLD_SELECTION_MD),
+    ("Investment Rule", INVESTMENT_RULE_MD),
+    ("Multiple Assets", MULTI_ASSET_MD),
+]
+
 def sx_card() -> dict:
     c = THEME["colors"]
     r = THEME["radius"]
@@ -178,7 +245,12 @@ def kpi_card(title: str, value_id: str) -> html.Div:
     )
 
 
-def info_badge(text: str | None = None, *, id: str | None = None, live: bool = False) -> html.Div:
+def info_badge(
+    text: str | None = None,
+    *,
+    id: str | None = None,
+    live: bool = False,
+) -> html.Div:
     c = THEME["colors"]
     f = THEME["font"]
 
@@ -222,15 +294,68 @@ def panel_card(title: str, body_id: str, body_text: str, *, min_height: str) -> 
     )
 
 
-def build_layout(  
-                *, 
-                title: str = "Live Portfolio",
-                subtitle: str | None = None,
-                etf_options: list[dict] | None = None,
-                default_etf: str | None = None):
+def collapsible_section(title: str, content: str, *, open: bool = False) -> html.Details:
+    c = THEME["colors"]
+    f = THEME["font"]
+
+    return html.Details(
+        open=open,
+        style={
+            "border": f'1px solid {c["border"]}',
+            "borderRadius": THEME["radius"]["inner"],
+            "padding": "10px 14px",
+            "background": c["surface_alt"],
+            "marginBottom": "10px",
+        },
+        children=[
+            html.Summary(
+                title,
+                style={
+                    "cursor": "pointer",
+                    "fontWeight": 700,
+                    "fontSize": f["section"],
+                    "color": c["text"],
+                },
+            ),
+            dcc.Markdown(
+                content,
+                mathjax=True,
+                style={
+                    "fontSize": f["body"],
+                    "lineHeight": 1.6,
+                    "color": c["text_soft"],
+                    "marginTop": "10px",
+                },
+            ),
+        ],
+    )
 
 
-
+def strategy_card() -> html.Div:
+    return section_card(
+        "Strategy Methodology",
+        [
+            html.Div(
+                style={
+                    "display": "flex",
+                    "flexDirection": "column",
+                    "gap": "0px",
+                },
+                children=[
+                    collapsible_section(title, content, open=(i == 0))
+                    for i, (title, content) in enumerate(STRATEGY_CONTENT)
+                ],
+            )
+        ],
+        style={"marginBottom": THEME["space"]["section_gap"]},
+    )
+def build_layout(
+    *,
+    title: str = "Live Portfolio",
+    subtitle: str | None = None,
+    etf_options: list[dict] | None = None,
+    default_etf: str | None = None,
+):
     c = THEME["colors"]
     f = THEME["font"]
     s = THEME["space"]
@@ -287,8 +412,6 @@ def build_layout(
                 ],
             ),
 
-            
-
             html.Div(
                 style={
                     "display": "grid",
@@ -296,110 +419,9 @@ def build_layout(
                     "marginBottom": s["section_gap"],
                 },
                 children=[
-                    section_card(
-                        "Volatility Regime Strategy",
-                        [
-                            dcc.Markdown(
-                                """
-
-This strategy is based on the idea that asset returns behave differently across volatility regimes.  
-We use volatility as a state variable to classify trading days into "favorable" and "unfavorable" environments, and adjust how much we invest accordingly.
-
-The goal is to identify a threshold that separates periods where the asset earns higher risk-adjusted returns from periods where it does not, allowing us to condition investment decisions on the observed volatility regime. 
-
-
-### Realized Volatility
-
-We use intraday realized volatility on day $t$ as a proxy for the asset's latent daily volatility. This is constructed using 5-minute intraday returns up to a fixed cutoff time.
-
-Let $P_{t,i}$ denote the intraday price at interval $i$. Then:
-
-$$
-r_{t,i} = \log\\left(\\frac{P_{t,i}}{P_{t,i-1}}\\right), \\quad
-RV_t = \\sum_i r_{t,i}^2, \\quad
-RVOL_t = \\sqrt{RV_t}.
-$$
-
-This produces a high-frequency, forward-looking estimate of volatility using only information available at time $t$.
-
-
-### Regime Classification
-
-Each day is classified into a volatility regime based on a threshold $\\tau^*$:
-
-$$
-\\text{Regime}_t =
-\\begin{cases}
-\\text{Low Volatility}, & RVOL_t < \\tau^* \\\\
-\\text{High Volatility}, & RVOL_t \\ge \\tau^*
-\\end{cases}
-$$
-
-This classification determines whether the market environment is favorable for taking risk.
-
-
-### Threshold Selection $\\tau^*$
-
-The threshold is estimated using a rolling 2-year training sample.  
-We construct a grid of 100 candidate thresholds $\\{\\tau_1, \\dots, \\tau_{100}\\}$ based on percentiles of realized volatility.
-
-For each candidate $\\tau_j$, we split the training sample into two regimes:
-- Low volatility: $\\{t : RVOL_t < \\tau_j\\}$
-- High volatility: $\\{t : RVOL_t \\ge \\tau_j\\}$
-
-We then align each day $t$ with the next-day return $R_{t+1}$ and compute Sharpe ratios separately within each regime. The optimal threshold is chosen to maximize the difference in risk-adjusted performance:
-
-$$
-\\Delta(\\tau_j) = SR_{\\text{low}}(\\tau_j) - SR_{\\text{high}}(\\tau_j),
-$$
-
-$$
-\\tau^* = \\arg\\max_{\\tau_j} \\Delta(\\tau_j).
-$$
-
-This selects the volatility cutoff that most clearly separates favorable and unfavorable return environments.
-
-The resulting $\\tau^*$ is then held fixed over the subsequent evaluation period, where signals are recomputed daily using updated realized volatility.
-
-### Investment Rule
-
-Once $\\tau^*$ is fixed, we form a daily signal using only information available at time $t$:
-
-$$
-s_t = \\mathbf{1}\\{RVOL_t < \\tau^*\\}
-$$
-
-The signal is then mapped into portfolio weights:
-
-- **Binary allocation**: fully invest or stay in cash  
-- **Mean-variance allocation**: allocate a fraction of capital based on expected returns and risk
-
-For mean-variance, we perform a grid search over allowable exposure levels from $0$ to $w_{\\max}$ and select the allocation that optimizes portfolio performance under the chosen objective.
-
-
-### Multiple Assets
-
-The framework extends naturally to multiple ETFs. For each asset, we compute its own realized volatility signal and threshold.
-
-Portfolio construction then proceeds in two steps:
-1. **Signal layer**: determine which assets are in a favorable regime  
-2. **Allocation layer**: distribute capital across selected assets
-
-In the current implementation, capital is allocated equally across active assets, with each asset receiving up to $1/m$ of total capital when $m$ assets are traded simultaneously.
-
-                                """,
-                                mathjax=True,
-                                style={
-                                    "fontSize": f["body"],
-                                    "lineHeight": 1.6,
-                                    "color": c["text_soft"],
-                                },
-                            )
-                        ],
-                    )
+                    strategy_card(),
                 ],
             ),
-
 
             html.Div(
                 style={
@@ -431,29 +453,42 @@ In the current implementation, capital is allocated equally across active assets
                     ),
                 ],
             ),
-
             html.Div(
                 style={
                     "display": "grid",
-                    "gridTemplateColumns": l["overview_grid_cols"],
                     "gap": s["section_gap"],
                     "marginBottom": s["section_gap"],
                 },
                 children=[
-                    dcc.Graph(
-                        id="equity-fig",
-                        figure={},
-                        config={"displayModeBar": False},
-                        style={"width": "100%", "height": "100%"},
-                    ),
-                    dcc.Graph(
-                        id="allocation-fig",
-                        figure={},
-                        config={"displayModeBar": False},
-                        style={"width": "100%", "height": "100%"},
-                    ),
+                    section_card(
+                        "",
+                        [
+                            html.Div(
+                                style={
+                                    "display": "grid",
+                                    "gridTemplateColumns": l["overview_grid_cols"],  # e.g. "2fr 1fr"
+                                    "gap": s["section_gap"],
+                                },
+                                children=[
+                                    dcc.Graph(
+                                        id="equity-fig",
+                                        figure={},
+                                        config={"displayModeBar": False},
+                                        style={"width": "100%", "height": "420px"},
+                                    ),
+                                    dcc.Graph(
+                                        id="allocation-fig",
+                                        figure={},
+                                        config={"displayModeBar": False},
+                                        style={"width": "100%", "height": "420px"},
+                                    ),
+                                ],
+                            )
+                        ],
+                    )
                 ],
             ),
+        
 
             section_card(
                 "ETF Drilldown",
@@ -471,11 +506,11 @@ In the current implementation, capital is allocated equally across active assets
                             html.Div("", style={"display": "none"}),
                             dcc.Dropdown(
                                 id="etf-selector",
-                                options=etf_options,
+                                options=etf_options or [],
                                 value=default_etf,
                                 placeholder="Select ETF",
                                 clearable=False,
-                                style={"minWidth": "240px"},
+                                style={"minWidth": l["dropdown_min_width"]},
                             ),
                         ],
                     ),
