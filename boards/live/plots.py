@@ -475,7 +475,7 @@ def plot_portfolio(df: pd.DataFrame) -> go.Figure:
             y=dfx["bh_equity"],
             mode="lines",
             name="Buy & Hold",
-            line=dict(width=2, dash="dash"),
+            line=dict(color=PAL["bh"], width=2, dash="dash"),
             hovertemplate="<b>Buy & Hold</b><br>%{x|%Y-%m-%d}<br>Equity: %{y:,.2f}<extra></extra>",
         )
     )
@@ -486,7 +486,7 @@ def plot_portfolio(df: pd.DataFrame) -> go.Figure:
             y=dfx["portfolio_value"],
             mode="lines",
             name="Portfolio",
-            line=dict(width=3),
+            line=dict(color=PAL["strategy"], width=3),
             hovertemplate="<b>Portfolio</b><br>%{x|%Y-%m-%d}<br>Value: %{y:,.2f}<extra></extra>",
         )
     )
@@ -515,6 +515,65 @@ def plot_portfolio(df: pd.DataFrame) -> go.Figure:
     fig.update_yaxes(title_text="Equity")
     fig.update_xaxes(title_text="")
     return fig
+
+def plot_avg_weights_from_metrics(metrics: dict) -> go.Figure:
+    rows = []
+
+    for k, v in metrics.items():
+        if k.startswith("avg_") and k.endswith("_weight"):
+            asset = k.replace("avg_", "").replace("_weight", "").upper()
+            val = pd.to_numeric(pd.Series([v]), errors="coerce").iloc[0]
+            if pd.notna(val):
+                rows.append((asset, float(val)))
+
+    if not rows:
+        return _empty_fig("No average weight data available.")
+
+    df_plot = pd.DataFrame(rows, columns=["asset", "avg_weight"])
+    df_plot = df_plot[df_plot["avg_weight"] > 0]
+    df_plot = df_plot.sort_values("avg_weight", ascending=True)
+
+    if df_plot.empty:
+        return _empty_fig("No positive average weights available.")
+
+    fig = go.Figure(
+        go.Bar(
+            x=df_plot["avg_weight"],
+            y=df_plot["asset"],
+            orientation="h",
+            text=[f"{v:.1%}" for v in df_plot["avg_weight"]],
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate="<b>%{y}</b><br>Average Weight: %{x:.2%}<extra></extra>",
+            marker=dict(
+                line=dict(width=0),
+            ),
+        )
+    )
+
+    _base_layout(
+        fig,
+        title="Average Allocation by Asset",
+        height=max(320, 40 * len(df_plot) + 140),
+        margin=dict(l=32, r=32, t=64, b=32),
+        show_legend=False,
+    )
+
+    fig.update_xaxes(
+        title_text="Average Weight",
+        tickformat=".0%",
+        range=[0, max(df_plot["avg_weight"].max() * 1.15, 0.05)],
+    )
+    fig.update_yaxes(
+        title_text="",
+        categoryorder="array",
+        categoryarray=df_plot["asset"],
+    )
+
+    return fig
+
+
+
 
 
 
@@ -613,38 +672,3 @@ def build_portfolio_table_card(metrics: dict) -> html.Div:
         ]
     )
 
-def plot_avg_weights_from_metrics(metrics: dict):
-    rows = []
-
-    for k, v in metrics.items():
-        if k.startswith("avg_") and k.endswith("_weight"):
-            asset = k.replace("avg_", "").replace("_weight", "").upper()
-            rows.append((asset, v))
-
-    if not rows:
-        return go.Figure()
-
-    df_plot = pd.DataFrame(rows, columns=["asset", "avg_weight"])
-    df_plot = df_plot.sort_values("avg_weight", ascending=True)
-
-  
-    fig = go.Figure(
-        go.Bar(
-            x=df_plot["avg_weight"],
-            y=df_plot["asset"],
-            orientation="h",
-            text=[f"{v:.1%}" for v in df_plot["avg_weight"]],
-            textposition="auto",
-        )
-    )
-
-    fig.update_layout(
-        title="Average Allocation",
-        template="plotly_white",
-        height=350,
-        margin=dict(l=40, r=20, t=40, b=40),
-        xaxis_title="Weight",
-        yaxis_title="",
-    )
-
-    return fig

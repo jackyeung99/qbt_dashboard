@@ -51,7 +51,7 @@ def _perf_metrics(
     ann_factor: int,
     return_type: str,
     prefix: str,
-    initial_equity: float = 1.0,
+    initial_equity: float = 100_000,
 ) -> Dict[str, Any]:
     r = _to_series(r)
     if r.empty:

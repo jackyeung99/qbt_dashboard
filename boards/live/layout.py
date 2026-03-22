@@ -430,11 +430,11 @@ def build_portfolio_section() -> html.Div:
             "gap": s["kpi_gap"],
         },
         children=[
+            kpi_card("Number of Trading Days", "kpi-n-obs"),
             kpi_card("Total PNL", "kpi-total-pnl"),
             kpi_card("Sharpe", "kpi-sharpe"),
             kpi_card("CAGR", "kpi-cagr"),
             kpi_card("Max Drawdown", "kpi-mdd"),
-            kpi_card("Volatility", "kpi-return-vol"),
             kpi_card("Avg. Daily Return", "kpi-mean-return"),
         ],
     )

@@ -55,12 +55,12 @@ def register_callbacks(app: Dash, *, load_live_data) -> None:
         Output("equity-fig", "figure"),
         Output("allocation-fig", "figure"),
         Output("generated_at", "children"),
+        Output("kpi-n-obs", "children"),
         Output("kpi-total-pnl", "children"),
         Output("kpi-sharpe", "children"),
         Output("kpi-cagr", "children"),
         Output("kpi-mdd", "children"),
         Output("kpi-mean-return", "children"),
-        Output("kpi-return-vol", "children"),
         Output("portfolio-stats-panel", "children"),
         Output("weights-stats-panel", "figure"),
         Input("url", "pathname"),
@@ -97,7 +97,7 @@ def register_callbacks(app: Dash, *, load_live_data) -> None:
        
             portfolio_table = build_portfolio_table_card(k)
             weights_table = plot_avg_weights_from_metrics(k)
-    
+          
 
             generated_at = "-"
             if meta and isinstance(meta, dict) and meta.get("generated_at_utc"):
@@ -107,12 +107,12 @@ def register_callbacks(app: Dash, *, load_live_data) -> None:
                 fig,
                 allocation_fig,
                 generated_at,
+                k.get("n_obs"),
                 fmt(k.get("total_pnl"), decimals=2),
                 fmt(k.get("sharpe"), decimals=2),
                 fmt(k.get("cagr"), style="pct", decimals=2),
                 fmt(k.get("max_dd"), style="pct", decimals=2),
                 fmt(k.get("mean_ann"), style="pct", decimals=2),
-                fmt(k.get("vol_ann"), style="pct", decimals=2),
                 portfolio_table,
                 weights_table,
             )
