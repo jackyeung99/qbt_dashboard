@@ -646,20 +646,18 @@ def build_signal_table_card(etf_df: pd.DataFrame, sig_metrics: dict) -> html.Div
 
 def build_portfolio_table_card(metrics: dict) -> html.Div:
     rows = [
-        ("Total PnL", fmt(metrics.get("total_pnl"), decimals=2)),
-        ("Sharpe", fmt(metrics.get("sharpe"), decimals=2)),
+        ("Total Return", fmt(metrics.get("total_return"), style='pct', decimals=2)),
+        ("Strategy Sharpe", fmt(metrics.get("sharpe"), decimals=2)),
+        ("Benchmark Sharpe (S&P 500)", fmt(metrics.get("bh_sharpe"), decimals=2)),
+        ("Sharpe Alpha vs Benchmark", fmt(metrics.get("sharpe_minus_bh"), decimals=2)),
         ("CAGR", fmt(metrics.get("cagr"), style="pct", decimals=2)),
         ("Max Drawdown", fmt(metrics.get("max_dd"), style="pct", decimals=2)),
-        ("Volatility", fmt(metrics.get("vol_ann"), style="pct", decimals=2)),
+        ("Avg Daily Volatility", fmt(metrics.get("vol_ann"), style="pct", decimals=2)),
         ("Avg Daily Return", fmt(metrics.get("mean_ann"), style="pct", decimals=3)),
+        ("Avg Daily Gain", fmt(metrics.get("avg_gain"), style="pct", decimals=3)),
+        ("Avg Daily Loss", fmt(metrics.get("avg_loss"), style="pct", decimals=3))
+        
     ]
-
-    # optional benchmark
-    if "bh_sharpe" in metrics:
-        rows.extend([
-            ("BH Sharpe", fmt(metrics.get("bh_sharpe"), decimals=2)),
-            ("Sharpe - BH", fmt(metrics.get("sharpe_minus_bh"), decimals=2)),
-        ])
 
 
     return html.Div(

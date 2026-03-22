@@ -211,7 +211,7 @@ def compute_portfolio_metrics(
     ann_factor: int = 252,
     return_type: str = "simple",
     col_ret: str = "strategy_ret",
-    col_bh: Optional[str] = "bh_ret",
+    col_bh: Optional[str] = "SPY_ret_cc",
 ) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
 
