@@ -12,6 +12,21 @@ import pytz  # or zoneinfo in Python 3.9+
 
 TZ = pytz.timezone("America/Indiana/Indianapolis") 
 
+
+ETF_LABEL_MAP = {
+    "XLE": "Energy (XLE)",
+    "XLC": "Communication Services (XLC)",
+    "XLY": "Consumer Discretionary (XLY)",
+    "XLP": "Consumer Staples (XLP)",
+    "XLF": "Financials (XLF)",
+    "XLV": "Health Care (XLV)",
+    "XLI": "Industrials (XLI)",
+    "XLB": "Materials (XLB)",
+    "XLRE": "Real Estate (XLRE)",
+    "XLK": "Technology (XLK)",
+    "XLU": "Utilities (XLU)",
+}
+
 def _daily_key():
     # changes once per day (in your timezone)
     return datetime.now(TZ).strftime("%Y-%m-%d")
@@ -34,7 +49,15 @@ def build_dashboard(ctx) -> Dict[str, Any]:
         equity_df, meta = load_live_data()
 
         etfs = extract_etfs_from_weights(equity_df) if equity_df is not None and not equity_df.empty else []
-        etf_options = [{"label": etf, "value": etf} for etf in etfs]
+
+        etf_options = [
+            {
+                "label": ETF_LABEL_MAP.get(etf, etf),  # fallback if missing
+                "value": etf,
+            }
+            for etf in etfs
+        ]
+
         default_etf = pick_default_etf(etfs)
 
         return build_layout(

@@ -69,17 +69,41 @@ The goal is to identify a threshold that separates periods where the asset earns
 """
 
 REALIZED_VOL_MD = r"""
-We use intraday realized volatility on day $t$ as a proxy for the asset's latent daily volatility...
+We use intraday realized volatility on day $t$ as a proxy for the asset's latent daily volatility. We can compute this by first computing the log returns from 5-min
+intraday returns between market open (9:30 AM ET) to when we make the decision and place trades (3:45 PM ET). 
 
 $$
-r_{t,i} = \log\left(\frac{P_{t,i}}{P_{t,i-1}}\right), \quad
-RV_t = \sum_i r_{t,i}^2, \quad
+r_{t,i} = \log\left(\frac{P_{t,i}}{P_{t,i-1}}\right)
+$$
+
+We then take the sum of squares to get Realized Variance 
+$$
+RV_t = \sum_i r_{t,i}^2
+$$
+
+as well as realized volatility
+$$
 RVOL_t = \sqrt{RV_t}.
 $$
 """
 
 REGIME_CLASSIFICATION_MD = r"""
-Each day is classified into a volatility regime based on a threshold $\tau^*$:
+Based on the realized volatility observed on day $t$, we classify each day into a volatility regime using a threshold $\tau^*$.
+
+The underlying idea is that market behavior differs between stable and turbulent environments, and this can be captured by our volatility proxy.  
+By identifying the prevailing regime, we can condition trading decisions and dynamically adjust portfolio exposure based on current risk conditions.
+
+- **Low Volatility Regime**
+  - Markets are more stable  
+  - Trends tend to persist  
+  - Lower risk 
+
+- **High Volatility Regime**
+  - Markets are more uncertain  
+  - Large drawdowns are more likely  
+  - Higher risk
+
+Formally, the regime is defined as:
 
 $$
 \text{Regime}_t =
@@ -88,35 +112,163 @@ $$
 \text{High Volatility}, & RVOL_t \ge \tau^*
 \end{cases}
 $$
+
+Where: 
+- $\tau^*$ is an empirically determined threshold that separates low- and high-volatility environments  
+
 """
 
 THRESHOLD_SELECTION_MD = r"""
-The threshold is estimated using a rolling 2-year training sample...
+The threshold \( \tau^* \) is estimated on a rolling 2-year training window using a linear scan over a grid of 100 candidate values.
+
+### Grid Construction
+
+We first construct a set of candidate thresholds  $\{\tau_j\}_{j=1}^{100}$ over the empirical distribution of realized volatility.
+
+To ensure robustness, the realized volatility series is **winsorized at the 5% level**, so that extreme values are clipped.  
+The grid is then defined over the central range:
 
 $$
-\Delta(\tau_j) = SR_{\text{low}}(\tau_j) - SR_{\text{high}}(\tau_j),
+\tau_j \in [\text{P}_{5}(RVOL), \ \text{P}_{95}(RVOL)]
 $$
 
+This ensures that the candidate thresholds focus on typical market conditions rather than rare outliers specifically it 
+- Reduces sensitivity to extreme volatility spikes
+- Prevents unstable threshold estimates across rolling windows
+- Focuses the model on persistent, tradable regimes
+
+
+
+### Objective Function
+
+For each candidate threshold $\tau_j$, we split the data into two regimes:
+- Low-volatility: $RVOL_t \leq \tau_j$
+- High-volatility: $RVOL_t > \tau_j$
+
+Within each regime, we compute Sharpe ratios and define:
+
 $$
-\tau^* = \arg\max_{\tau_j} \Delta(\tau_j).
+\Delta(\tau_j) = SR_{\text{low}}(\tau_j) - SR_{\text{high}}(\tau_j)
 $$
+
+
+### Threshold Selection
+
+We select the threshold that maximizes the separation:
+
+$$
+\tau^* = \arg\max_{\tau_j} \Delta(\tau_j)
+$$
+
+This identifies the volatility cutoff that best distinguishes favorable and unfavorable environments.
+
+
+
+
 """
 
 INVESTMENT_RULE_MD = r"""
-Once $\tau^*$ is fixed:
+After estimating \( \tau^* \), we evaluate the current day’s realized volatility and define a trading signal:
 
 $$
-s_t = \mathbf{1}\{RVOL_t < \tau^*\}
+s_t = \mathbf{1}\{RVOL_t \leq \tau^*\}
 $$
 
-- Binary allocation  
-- Mean-variance allocation (grid search from $0$ to $w_{\max}$)
+We define two ways of allocating resources for a given strategy 
+
+### Binary Allocation
+
+In the simplest case, the signal directly determines exposure:
+
+$$
+w_t = w_{\max} \cdot s_t
+$$
+
+where:
+- $w_{\max}$ is the maximum allowable allocation to the asset
+
+This implies:
+- $s_t = 1$ → fully invested ($w_t = w_{\max}$)  
+- $s_t = 0$ → no investment ($w_t = 0$)  
+
+
+### Mean-Variance Allocation
+
+Alternatively, the signal can be used to partially invest based on the regime and the 2 year historical window.
+
+We consider a one-dimensional weight $w \in [w_{\text{low}}, w_{\text{high}}]$, representing the allocation to the asset (with the remainder held in cash).
+
+We then perform a simple linear scan over candidate weights:
+
+$$
+w \in \{w_1, w_2, \dots, w_K\}, \quad w_k \in [w_{\text{low}}, w_{\text{high}}]
+$$
+
+For each candidate weight $w_k$, we evaluate a mean-variance objective using regime-specific estimates of expected return $\mu$ and variance $\sigma^2$:
+
+$$
+\max_{w_k} \left( w_k \mu - \frac{\gamma}{2} w_k^2 \sigma^2 \right)
+$$
+
+The optimal weight is then selected as:
+
+$$
+w_t = \arg\max_{w_k \in [w_{\text{low}}, w_{\text{high}}]} \left( w_k \mu - \frac{\gamma}{2} w_k^2 \sigma^2 \right)
+$$
+
+This procedure is performed separately for each regime:
+- if $s_t = 1$, we use parameters estimated from low-volatility periods  
+- if $s_t = 0$, we use parameters estimated from high-volatility periods  
+
 """
 
 MULTI_ASSET_MD = r"""
-The framework extends naturally to multiple ETFs...
+The framework extends naturally to multiple assets by allocating capital across independent strategies.
 
-Each asset receives up to $1/m$ of capital when $m$ assets are active.
+Given $m$ assets, we partition the total capital so that each strategy operates on an equal share:
+
+$$
+\text{Capital per strategy} = \frac{1}{m}
+$$
+
+Each asset-specific strategy is then run independently using its own:
+- realized volatility $RVOL_{i,t}$
+- threshold $\tau_i^*$
+- signal $s_{i,t}$
+
+and produces its own allocation:
+$$
+w_{i,t} = \frac{1}{m} \cdot \tilde{w}_{i,t}
+$$
+
+where $\tilde{w}_{i,t}$ is the weight determined by the single-asset strategy (e.g., binary or mean-variance).
+"""
+
+
+CHOSEN_ASSETS_MD = r"""
+
+We consider ETFs as our primary investment instruments, as they provide natural diversification across sectors.
+
+The strategy was initially developed and tested on the Energy Select Sector ETF ($XLE$).  
+We then extend the framework to a broader universe of sector ETFs to evaluate its performance across different parts of the market.
+
+Specifically, we run the strategy on the following sector ETFs, which together cover the major sectors of the S\&P 500:
+
+Each ETF represents a distinct sector:
+- Energy ($XLE$)
+- Communication Services ($XLC$)
+- Consumer Discretionary ($XLY$)
+- Consumer Staples ($XLP$)
+- Financials ($XLF$)
+- Health Care ($XLV$)
+- Industrials ($XLI$)
+- Materials ($XLB$)
+- Technology ($XLK$)
+- Utilities ($XLU$)
+
+This setup allows us to test whether the volatility-regime framework generalizes across sectors with different risk profiles and economic sensitivities.
+
+
 """
 
 STRATEGY_CONTENT = [
@@ -126,6 +278,7 @@ STRATEGY_CONTENT = [
     ("Threshold Selection τ*", THRESHOLD_SELECTION_MD),
     ("Investment Rule", INVESTMENT_RULE_MD),
     ("Multiple Assets", MULTI_ASSET_MD),
+    ("Selected Assets", CHOSEN_ASSETS_MD),
 ]
 
 

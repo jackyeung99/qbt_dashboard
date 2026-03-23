@@ -94,8 +94,6 @@ def register_callbacks(app: Dash, *, load_live_data) -> None:
 
             k = compute_portfolio_metrics(equity)
             
-            print(equity.columns)
-            print(k)
        
             portfolio_table = build_portfolio_table_card(k)
             weights_table = plot_avg_weights_from_metrics(k)
