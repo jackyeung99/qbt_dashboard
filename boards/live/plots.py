@@ -293,6 +293,7 @@ def plot_rv_tau_weights_returns_equity(
     required = [
         date_col,
         "weight",
+        "raw_ret",
         "_state_var",
         "_tau_star",
         ret_col,
@@ -306,8 +307,7 @@ def plot_rv_tau_weights_returns_equity(
 
     df = etf_df.copy().sort_values(date_col)
     x = pd.to_datetime(df[date_col])
-    ret = pd.to_numeric(df[ret_col], errors="coerce")
-    bh_ret = pd.to_numeric(df["etf_bh_ret"], errors="coerce")
+    raw_ret = pd.to_numeric(df["raw_ret"], errors="coerce")
 
     fig = make_subplots(
         rows=4,
@@ -350,11 +350,11 @@ def plot_rv_tau_weights_returns_equity(
     )
 
     if returns_as_bars:
-        colors = np.where(bh_ret >= 0, palette["pos"], palette["neg"])
+        colors = np.where(raw_ret >= 0, palette["pos"], palette["neg"])
         fig.add_trace(
             go.Bar(
                 x=x,
-                y=bh_ret,
+                y=raw_ret,
                 name="Buy & Hold Return",
                 marker_color=colors,
                 opacity=0.9,
@@ -367,7 +367,7 @@ def plot_rv_tau_weights_returns_equity(
         fig.add_trace(
             go.Scatter(
                 x=x,
-                y=ret,
+                y=raw_ret,
                 mode="lines",
                 name="ETF Return",
                 line=dict(color=palette["strategy"], width=1.8),
@@ -654,7 +654,8 @@ def build_portfolio_table_card(metrics: dict) -> html.Div:
         ("Strategy Sharpe", fmt(metrics.get("sharpe"), decimals=2)),
         ("Benchmark Sharpe (S&P 500)", fmt(metrics.get("bh_sharpe"), decimals=2)),
         ("Sharpe Alpha vs Benchmark", fmt(metrics.get("sharpe_minus_bh"), decimals=2)),
-        ("CAGR", fmt(metrics.get("cagr"), style="pct", decimals=2)),
+        ("Correlation with Benchmark (S&P 500)", fmt(metrics.get("corr_to_spy"), decimals=2)),
+        ("Compound Annual Growth Rate (CAGR)", fmt(metrics.get("cagr"), style="pct", decimals=2)),
         ("Max Drawdown", fmt(metrics.get("max_dd"), style="pct", decimals=2)),
         ("Avg Daily Volatility", fmt(metrics.get("vol_ann"), style="pct", decimals=2)),
         ("Avg Daily Return", fmt(metrics.get("mean"), style="pct", decimals=3)),

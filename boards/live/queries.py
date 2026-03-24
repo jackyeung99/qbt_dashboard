@@ -102,9 +102,7 @@ def normalize_portfolio(
       - session_date
       - portfolio_value
       - strategy_equity_norm   (from portfolio_value)
-      - bh_equity, bh_equity_norm (from bh_ret_col)
-      - weight, turnover
-      - state_var
+      - bh_equity, bh_equity_norm (from SPY returns)
     """
 
     if equity is None:
@@ -116,22 +114,32 @@ def normalize_portfolio(
     x = equity.copy()
     x = _ensure_session_date(x, date_col=date_col)
 
-    # portfolio value (fallback)
     if portfolio_value_col not in x.columns:
         if "equity" in x.columns:
             x = x.rename(columns={"equity": portfolio_value_col})
         else:
             raise ValueError(f"Missing {portfolio_value_col!r} (and no 'equity' fallback).")
 
-
+    x = x.sort_values(date_col).reset_index(drop=True)
 
     initial_value = float(x[portfolio_value_col].iloc[0])
 
-    r = x["SPY_ret_cc"].fillna(0.0).astype(float)
+    if "SPY_ret_cc" not in x.columns:
+        raise ValueError("Missing 'SPY_ret_cc' column.")
 
-    x["bh_equity"] = initial_value * np.exp(r.cumsum().shift(fill_value=0))
+    r = pd.to_numeric(x["SPY_ret_cc"], errors="coerce").fillna(0.0)
+
+    if returns_are_log:
+        x["SPY_ret_simple"] = np.exp(r) - 1.0
+    else:
+        x["SPY_ret_simple"] = r
+
+    x["bh_equity"] = initial_value * (1.0 + x["SPY_ret_simple"]).cumprod()
     
-    return x 
+    x["bh_equity_norm"] = x["bh_equity"] / x["bh_equity"].iloc[0]
+    x["strategy_equity_norm"] = x[portfolio_value_col] / x[portfolio_value_col].iloc[0]
+
+    return x
     # return x.dropna(subset=['trained_at_utc'])
 
 
@@ -177,6 +185,7 @@ def normalize_etf_view(
 
     ret = out['ret_cc'].fillna(0.0)
     simple_ret = np.exp(ret) - 1
+    out['raw_ret'] = simple_ret
 
     weight = out["weight"].ffill().fillna(0.0)
 

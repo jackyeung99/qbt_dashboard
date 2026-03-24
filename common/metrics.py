@@ -258,6 +258,11 @@ def compute_portfolio_metrics(
             if (strat_sh is not None) and (bh_sh is not None):
                 out["sharpe_minus_bh"] = float(strat_sh - bh_sh)
 
+            strat = r_strategy.loc[idx]
+            bench = r_bh.loc[idx]
+
+            out["corr_to_spy"] = float(strat.corr(bench))
+
     # weight summaries
     weight_cols = [c for c in ts_df.columns if str(c).endswith("weight")]
 
