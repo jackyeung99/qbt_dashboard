@@ -119,7 +119,7 @@ Where:
 """
 
 THRESHOLD_SELECTION_MD = r"""
-The threshold \( \tau^* \) is estimated on a rolling 2-year training window using a linear scan over a grid of 100 candidate values.
+The threshold $\tau^*$ is estimated on a rolling 2-year training window using a linear scan over a grid of 100 candidate values.
 
 ### Grid Construction
 
@@ -168,7 +168,7 @@ This identifies the volatility cutoff that best distinguishes favorable and unfa
 """
 
 INVESTMENT_RULE_MD = r"""
-After estimating \( \tau^* \), we evaluate the current day’s realized volatility and define a trading signal:
+After estimating  $\tau^*$, we evaluate the current day’s realized volatility and define a trading signal:
 
 $$
 s_t = \mathbf{1}\{RVOL_t \leq \tau^*\}
@@ -717,6 +717,11 @@ def build_layout(
         [
             dcc.Location(id="url"),
             build_header(title=title, subtitle=subtitle),
+            build_portfolio_section(),
+            build_asset_section(
+                etf_options=etf_options,
+                default_etf=default_etf,
+            ),
             html.Div(
                 style={
                     "display": "grid",
@@ -724,11 +729,6 @@ def build_layout(
                     "marginBottom": s["section_gap"],
                 },
                 children=[strategy_card()],
-            ),
-            build_portfolio_section(),
-            build_asset_section(
-                etf_options=etf_options,
-                default_etf=default_etf,
             ),
         ]
     )

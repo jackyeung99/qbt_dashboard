@@ -176,12 +176,19 @@ def normalize_etf_view(
     out.loc[mask, "signal"] = (out.loc[mask, "_state_var"] > out.loc[mask, "_tau_star"]).astype(int)
 
     ret = out['ret_cc'].fillna(0.0)
-    out["etf_ret"] = out["weight"] * ret
+    simple_ret = np.exp(ret) - 1
 
-    w_max = float(out["_w_high"].dropna().max())
-    out['etf_bh_ret'] = w_max * ret
+    weight = out["weight"].ffill().fillna(0.0)
 
-    out["etf_equity"] = np.exp(out["etf_ret"].cumsum().shift(fill_value=0.0))
-    out["etf_bh_equity"] = np.exp(out["etf_bh_ret"].cumsum().shift(fill_value=0.0))
+    out["etf_ret"] = weight * simple_ret
+    out["etf_bh_ret"] = 0.10 * simple_ret
+
+    out["etf_equity"] = (1 + out["etf_ret"]).cumprod()
+    out["etf_bh_equity"] = (1 + out["etf_bh_ret"]).cumprod()
+
+    # normalize to start at 1
+    if not out.empty:
+        out["etf_equity"] /= out["etf_equity"].iloc[0]
+        out["etf_bh_equity"] /= out["etf_bh_equity"].iloc[0]
 
     return out

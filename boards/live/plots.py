@@ -602,6 +602,8 @@ def build_signal_table_card(etf_df: pd.DataFrame, sig_metrics: dict) -> html.Div
     #     if pd.notna(current_state) and pd.notna(current_tau)
     #     else np.nan
     # )
+    low_vol_target_weight = etf_df.iloc[-1]['_w_low']
+    high_vol_target_weight = etf_df.iloc[-1]['_w_high']
 
    
     current_regime_label = "-"
@@ -618,6 +620,8 @@ def build_signal_table_card(etf_df: pd.DataFrame, sig_metrics: dict) -> html.Div
         ("Previous Regime", previous_regime_label),
         ("Current State Var", fmt(current_state, decimals=4)),
         ("Current Tau*", fmt(current_tau, decimals=4)),
+        ("Low-Regime Target Weight", fmt(low_vol_target_weight, style="pct", decimals=1)),
+        ("High-Regime Target Weight", fmt(high_vol_target_weight, style="pct", decimals=1)),
         # ("Signal Strength", fmt(signal_strength, decimals=4)),
         ("Days in Current Regime", fmt(sig_metrics.get("signal_days_in_current_regime"), decimals=0)),
         ("% Time High Regime", fmt(sig_metrics.get("signal_pct_state_1"), style="pct", decimals=1)),
@@ -653,7 +657,7 @@ def build_portfolio_table_card(metrics: dict) -> html.Div:
         ("CAGR", fmt(metrics.get("cagr"), style="pct", decimals=2)),
         ("Max Drawdown", fmt(metrics.get("max_dd"), style="pct", decimals=2)),
         ("Avg Daily Volatility", fmt(metrics.get("vol_ann"), style="pct", decimals=2)),
-        ("Avg Daily Return", fmt(metrics.get("mean_ann"), style="pct", decimals=3)),
+        ("Avg Daily Return", fmt(metrics.get("mean"), style="pct", decimals=3)),
         ("Avg Daily Gain", fmt(metrics.get("avg_gain"), style="pct", decimals=3)),
         ("Avg Daily Loss", fmt(metrics.get("avg_loss"), style="pct", decimals=3))
         

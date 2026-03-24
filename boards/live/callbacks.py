@@ -112,7 +112,7 @@ def register_callbacks(app: Dash, *, load_live_data) -> None:
                 fmt(k.get("sharpe"), decimals=2),
                 fmt(k.get("cagr"), style="pct", decimals=2),
                 fmt(k.get("max_dd"), style="pct", decimals=2),
-                fmt(k.get("mean_ann"), style="pct", decimals=2),
+                fmt(k.get("mean"), style="pct", decimals=2),
                 portfolio_table,
                 weights_table,
             )
@@ -176,7 +176,7 @@ def register_callbacks(app: Dash, *, load_live_data) -> None:
             ann_factor=252,
             return_type="simple",
             prefix="",
-            initial_equity=100_000,
+            initial_equity=100_000 / 10, # 10 assets 
         )
 
         fig = plot_rv_tau_weights_returns_equity(etf_df, etf=selected_etf)
