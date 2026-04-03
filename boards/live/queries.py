@@ -111,7 +111,7 @@ def normalize_portfolio(
     if isinstance(equity, pd.Series):
         equity = equity.to_frame(name=portfolio_value_col)
 
-    x = equity.copy()
+    x = equity.copy().dropna(subset=['trained_at_utc'])
     x = _ensure_session_date(x, date_col=date_col)
 
     if portfolio_value_col not in x.columns:
@@ -134,13 +134,18 @@ def normalize_portfolio(
     else:
         x["SPY_ret_simple"] = r
 
-    x["bh_equity"] = initial_value * (1.0 + x["SPY_ret_simple"]).cumprod()
-    
+
+
+    # x["bh_equity"] = initial_value * (1.0 + x["SPY_ret_simple"]).cumprod()
+    growth = (1.0 + x["SPY_ret_simple"]).cumprod()
+    growth[0] = 1.0
+    x["bh_equity"] = initial_value * growth
+
     x["bh_equity_norm"] = x["bh_equity"] / x["bh_equity"].iloc[0]
     x["strategy_equity_norm"] = x[portfolio_value_col] / x[portfolio_value_col].iloc[0]
 
     return x
-    # return x.dropna(subset=['trained_at_utc'])
+
 
 
 def normalize_etf_view(
