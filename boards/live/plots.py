@@ -322,7 +322,6 @@ def plot_rv_tau_weights_returns_equity(
             f"{etf} State Variable vs Threshold",
         ),
     )
-
     fig.add_trace(
         go.Scatter(
             x=x,
@@ -389,6 +388,8 @@ def plot_rv_tau_weights_returns_equity(
         row=3,
         col=1,
     )
+
+    fig.update_yaxes(range=[0, 0.1], row=3, col=1)
 
     fig.add_trace(
         go.Scatter(

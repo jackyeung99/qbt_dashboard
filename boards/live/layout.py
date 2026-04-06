@@ -246,29 +246,26 @@ where $\tilde{w}_{i,t}$ is the weight determined by the single-asset strategy (e
 
 
 CHOSEN_ASSETS_MD = r"""
+We use exchange-traded funds (ETFs) as our primary investment instruments, as they provide built-in diversification and liquid exposure to broad sectors of the equity market.
 
-We consider ETFs as our primary investment instruments, as they provide natural diversification across sectors.
+The strategy was initially developed and validated on the Energy Select Sector SPDR ETF ($XLE$). We then extend the framework to a broader universe of sector ETFs to evaluate its performance across different parts of the market.
 
-The strategy was initially developed and tested on the Energy Select Sector ETF ($XLE$).  
-We then extend the framework to a broader universe of sector ETFs to evaluate its performance across different parts of the market.
+Specifically, we apply the strategy to the **State Street Sector SPDR ETFs** (see: [State Street Sector ETFs](https://www.ssga.com/us/en/intermediary/capabilities/equities/sector-investing/sector-and-industry-etfs)), which are designed to partition the S\&P 500 into distinct sectors:
 
-Specifically, we run the strategy on the following sector ETFs, which together cover the major sectors of the S\&P 500:
+- Energy ($XLE$)  
+- Communication Services ($XLC$)  
+- Consumer Discretionary ($XLY$)  
+- Consumer Staples ($XLP$)  
+- Financials ($XLF$)  
+- Health Care ($XLV$)  
+- Industrials ($XLI$)  
+- Materials ($XLB$)  
+- Technology ($XLK$)  
+- Utilities ($XLU$)  
 
-Each ETF represents a distinct sector:
-- Energy ($XLE$)
-- Communication Services ($XLC$)
-- Consumer Discretionary ($XLY$)
-- Consumer Staples ($XLP$)
-- Financials ($XLF$)
-- Health Care ($XLV$)
-- Industrials ($XLI$)
-- Materials ($XLB$)
-- Technology ($XLK$)
-- Utilities ($XLU$)
+These ETFs are **mutually exclusive**, meaning each stock in the S\&P 500 is assigned to exactly one sector. As a result, there is no direct overlap in holdings across the ETFs, and together they provide near-complete coverage of the index.
 
-This setup allows us to test whether the volatility-regime framework generalizes across sectors with different risk profiles and economic sensitivities.
-
-
+This setup allows us to test whether the volatility-regime framework generalizes across sectors with different risk profiles, economic drivers, and sensitivity to macro conditions.
 """
 
 STRATEGY_CONTENT = [
@@ -281,6 +278,70 @@ STRATEGY_CONTENT = [
     ("Selected Assets", CHOSEN_ASSETS_MD),
 ]
 
+PIPELINE_CONTENT = [
+    (
+        "1. Data Ingestion",
+        """
+Load and standardize source data into a consistent schema.
+
+- Determine last ingestion date for each asset
+- Update data up to the present time
+- Normalize timestamps and identifiers
+- Ensure required columns are present before downstream processing
+        """,
+    ),
+    (
+        "2. Feature Engineering",
+        """
+Transform cleaned price data into model-ready features.
+
+- Compute close-to-close returns
+- Compute realized variance and realized volatility
+- Construct rolling or lagged inputs used by the strategy
+        """,
+    ),
+    (
+        "3. Signal Estimation",
+        """
+Estimate the volatility regime and determine the portfolio signal.
+
+- Fit the threshold on the training window
+- Compare the current state variable to the fitted threshold
+- Map the regime classification into a trading signal
+        """,
+    ),
+    (
+        "4. Portfolio Construction",
+        """
+Translate the signal into target portfolio exposure.
+
+- Generate signals independently for each ETF  
+- Allocate capital across active positions  
+- Compute final portfolio weights
+        """,
+    ),
+     (
+        "5. Execution",
+"""
+Translate portfolio weights into implementable trades and update live positions.
+
+- Read target portfolio weights  
+- Compute notional changes required to rebalance  
+- Submit orders to the broker  
+- Track realized positions and performance
+""",
+    ),
+    (
+        "6. Evaluation and Live Tracking",
+        """
+Measure realized performance and compare against benchmark behavior.
+
+- Compute strategy returns from lagged weights
+- Track equity curve, drawdowns, and summary metrics
+- Compare the live portfolio path against buy-and-hold
+        """,
+    ),
+]
 
 def sx_card() -> dict:
     c = THEME["colors"]
@@ -466,57 +527,6 @@ def content_panel(panel_id: str, *, min_height: str, padding: str = "14px") -> h
     )
 
 
-def collapsible_section(title: str, content: str, *, open: bool = False) -> html.Details:
-    c = THEME["colors"]
-    f = THEME["font"]
-
-    return html.Details(
-        open=open,
-        style={
-            "border": f'1px solid {c["border"]}',
-            "borderRadius": THEME["radius"]["inner"],
-            "padding": "10px 14px",
-            "background": c["surface_alt"],
-            "marginBottom": "10px",
-        },
-        children=[
-            html.Summary(
-                title,
-                style={
-                    "cursor": "pointer",
-                    "fontWeight": 700,
-                    "fontSize": f["section"],
-                    "color": c["text"],
-                },
-            ),
-            dcc.Markdown(
-                content,
-                mathjax=True,
-                style={
-                    "fontSize": f["body"],
-                    "lineHeight": 1.6,
-                    "color": c["text_soft"],
-                    "marginTop": "10px",
-                },
-            ),
-        ],
-    )
-
-
-def strategy_card() -> html.Div:
-    return section_card(
-        "Strategy Methodology",
-        [
-            html.Div(
-                style={"display": "flex", "flexDirection": "column", "gap": "0px"},
-                children=[
-                    collapsible_section(title, content, open=(i == 0))
-                    for i, (title, content) in enumerate(STRATEGY_CONTENT)
-                ],
-            )
-        ],
-        style={"marginBottom": THEME["space"]["section_gap"]},
-    )
 
 
 def build_header(*, title: str, subtitle: str | None) -> html.Div:
@@ -704,6 +714,156 @@ def build_asset_section(
     )
 
 
+# def build_layout(
+#     *,
+#     title: str = "Live Portfolio",
+#     subtitle: str | None = None,
+#     etf_options: list[dict] | None = None,
+#     default_etf: str | None = None,
+# ):
+#     s = THEME["space"]
+
+#     return page_shell(
+#         [
+#             dcc.Location(id="url"),
+#             build_header(title=title, subtitle=subtitle),
+#             build_portfolio_section(),
+#             build_asset_section(
+#                 etf_options=etf_options,
+#                 default_etf=default_etf,
+#             ),
+#             html.Div(
+#                 style={
+#                     "display": "grid",
+#                     "gap": s["section_gap"],
+#                     "marginBottom": s["section_gap"],
+#                 },
+#                 children=[strategy_card()],
+#             ),
+#         ]
+#     )
+
+
+def collapsible_section(title: str, content: str, *, open: bool = False) -> html.Details:
+    c = THEME["colors"]
+    f = THEME["font"]
+
+    return html.Details(
+        open=open,
+        style={
+            "border": f'1px solid {c["border"]}',
+            "borderRadius": THEME["radius"]["inner"],
+            "padding": "10px 14px",
+            "background": c["surface_alt"],
+            "marginBottom": "10px",
+        },
+        children=[
+            html.Summary(
+                title,
+                style={
+                    "cursor": "pointer",
+                    "fontWeight": 700,
+                    "fontSize": f["section"],
+                    "color": c["text"],
+                },
+            ),
+            dcc.Markdown(
+                content,
+                mathjax=True,
+                style={
+                    "fontSize": f["body"],
+                    "lineHeight": 1.6,
+                    "color": c["text_soft"],
+                    "marginTop": "10px",
+                },
+            ),
+        ],
+    )
+
+
+
+
+
+def strategy_card() -> html.Div:
+    return section_card(
+        "Strategy Methodology",
+        [
+            html.P(
+                "Overview of the volatility-regime framework, threshold estimation, and portfolio construction logic.",
+                style={
+                    "margin": "0 0 16px 0",
+                    "color": THEME["colors"]["text_muted"],
+                    "lineHeight": 1.6,
+                },
+            ),
+            html.Div(
+                style={"display": "grid", "gap": "12px"},
+                children=[
+                    collapsible_section(title, content)
+                    for title, content in STRATEGY_CONTENT
+                ],
+            ),
+        ],
+        style={"marginBottom": THEME["space"]["section_gap"]},
+    )
+
+
+def pipeline_card() -> html.Div:
+    return section_card(
+        "Pipeline Implementation",
+        [
+            html.P(
+                "Overview of the trading system",
+                style={
+                    "margin": "0 0 16px 0",
+                    "color": THEME["colors"]["text_muted"],
+                    "lineHeight": 1.6,
+                },
+            ),
+            html.Div(
+                style={"display": "grid", "gap": "12px"},
+                children=[
+                    collapsible_section(title, content)
+                    for title, content in PIPELINE_CONTENT
+                ],
+            ),
+        ],
+        style={"marginBottom": THEME["space"]["section_gap"]},
+    )
+
+
+def build_live_tab(*, etf_options=None, default_etf=None) -> html.Div:
+    s = THEME["space"]
+
+    return html.Div(
+        style={
+            "display": "grid",
+            "gap": s["section_gap"],
+        },
+        children=[
+            build_portfolio_section(),
+            build_asset_section(
+                etf_options=etf_options,
+                default_etf=default_etf,
+            ),
+        ],
+    )
+
+
+def build_strategy_tab() -> html.Div:
+    s = THEME["space"]
+
+    return html.Div(
+        style={
+            "display": "grid",
+            "gap": s["section_gap"],
+        },
+        children=[
+            strategy_card(),
+            pipeline_card(),
+        ],
+    )
+
 def build_layout(
     *,
     title: str = "Live Portfolio",
@@ -712,24 +872,75 @@ def build_layout(
     default_etf: str | None = None,
 ):
     s = THEME["space"]
+    c = THEME["colors"]
+    r = THEME["radius"]
+
+    tab_style = {
+        "padding": "10px 18px",
+        "fontWeight": 600,
+        "border": "none",
+        "background": "transparent",
+        "color": c["text_muted"],
+    }
+
+    selected_tab_style = {
+        **tab_style,
+        "color": c["text"],
+        "background": c["surface"],
+        "border": f'1px solid {c["border"]}',
+        "borderRadius": r["pill"],
+        "boxShadow": c["shadow"],
+    }
 
     return page_shell(
         [
             dcc.Location(id="url"),
             build_header(title=title, subtitle=subtitle),
-            build_portfolio_section(),
-            build_asset_section(
-                etf_options=etf_options,
-                default_etf=default_etf,
-            ),
-            html.Div(
-                style={
-                    "display": "grid",
-                    "gap": s["section_gap"],
+
+            dcc.Tabs(
+                value="tab-live",
+                parent_style={
                     "marginBottom": s["section_gap"],
                 },
-                children=[strategy_card()],
+                style={
+                    "background": "transparent",
+                },
+                colors={
+                    "border": "transparent",
+                    "primary": c["text"],
+                    "background": "transparent",
+                },
+                children=[
+                    dcc.Tab(
+                        label="Live Dashboard",
+                        value="tab-live",
+                        style=tab_style,
+                        selected_style=selected_tab_style,
+                        children=[
+                            html.Div(
+                                style={"marginTop": s["section_gap"]},
+                                children=[
+                                    build_live_tab(
+                                        etf_options=etf_options,
+                                        default_etf=default_etf,
+                                    )
+                                ],
+                            )
+                        ],
+                    ),
+                    dcc.Tab(
+                        label="Strategy Implementation",
+                        value="tab-strategy",
+                        style=tab_style,
+                        selected_style=selected_tab_style,
+                        children=[
+                            html.Div(
+                                style={"marginTop": s["section_gap"]},
+                                children=[build_strategy_tab()],
+                            )
+                        ],
+                    ),
+                ],
             ),
         ]
     )
-

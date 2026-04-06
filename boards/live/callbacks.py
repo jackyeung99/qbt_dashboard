@@ -179,6 +179,7 @@ def register_callbacks(app: Dash, *, load_live_data) -> None:
             initial_equity=100_000 / 10, # 10 assets 
         )
 
+        # print(etf_df)
         fig = plot_rv_tau_weights_returns_equity(etf_df, etf=selected_etf)
 
 
