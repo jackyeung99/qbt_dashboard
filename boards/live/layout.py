@@ -654,33 +654,54 @@ def build_strategy_selector(
     return html.Div(
         style={
             **sx_card(),
-            "padding": THEME["space"]["card_pad"],
+            "padding": "14px 16px",
             "marginBottom": THEME["space"]["section_gap"],
             "display": "flex",
             "justifyContent": "space-between",
             "alignItems": "center",
-            "gap": THEME["space"]["section_gap"],
+            "gap": "16px",
             "flexWrap": "wrap",
+
+            # 🔥 make it stand out
+            "border": f'2px solid {THEME["colors"]["border_soft"]}',
+            "background": THEME["colors"]["surface_alt"],
         },
         children=[
             html.Div(
-                "Strategy",
-                style={
-                    "fontWeight": 800,
-                    "color": THEME["colors"]["text"],
-                },
+                [
+                    html.Div(
+                        "Strategy",
+                        style={
+                            "fontSize": "12px",
+                            "fontWeight": 600,
+                            "color": THEME["colors"]["text_muted"],
+                            "textTransform": "uppercase",
+                            "letterSpacing": "0.5px",
+                            "marginBottom": "4px",
+                        },
+                    ),
+                    html.Div(
+                        "Select Strategy",
+                        style={
+                            "fontSize": "16px",
+                            "fontWeight": 800,
+                            "color": THEME["colors"]["text"],
+                        },
+                    ),
+                ]
             ),
             dcc.Dropdown(
                 id="strategy-selector",
                 options=strategy_options or [],
                 value=default_strategy,
-                placeholder="Select Strategy",
                 clearable=False,
-                style={"minWidth": "320px"},
+                style={
+                    "minWidth": "320px",
+                    "fontWeight": 600,
+                },
             ),
         ],
     )
-
 def build_asset_section(
     *,
     etf_options: list[dict] | None = None,

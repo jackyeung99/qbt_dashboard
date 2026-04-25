@@ -160,10 +160,10 @@ def _base_layout(
         ),
         legend=dict(
             orientation="h",
-            y=1.10,
             yanchor="bottom",
-            x=0.0,
-            xanchor="left",
+            y=1.08,
+            xanchor="right",
+            x=1.0,
             bgcolor=PLOT_THEME["legend_bg"],
             borderwidth=0,
             font=dict(size=12),
