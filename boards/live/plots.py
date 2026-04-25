@@ -458,6 +458,161 @@ def plot_rv_tau_weights_returns_equity(
 
     return fig
 
+def plot_single_asset_rv_tau_weight_return(
+    etf_df: pd.DataFrame,
+    *,
+    etf: str = "Asset",
+    date_col: str = "date",
+    ret_col: str = "etf_ret",
+    returns_as_bars: bool = True,
+    lock_xticks: bool = True,
+    pal: Dict[str, str] | None = None,
+) -> go.Figure:
+
+    palette = dict(PAL)
+    if pal:
+        palette.update(pal)
+
+    required = [
+        date_col,
+        "weight",
+        "raw_ret",
+        "_state_var",
+        "_tau_star",
+    ]
+    missing = [c for c in required if c not in etf_df.columns]
+    if missing:
+        return _empty_fig(f"Missing required column(s): {', '.join(missing)}")
+
+    df = etf_df.copy().sort_values(date_col)
+    x = pd.to_datetime(df[date_col])
+    raw_ret = pd.to_numeric(df["raw_ret"], errors="coerce")
+
+    # 🔥 3 rows instead of 4
+    fig = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.06,
+        row_heights=[0.30, 0.28, 0.42],
+        subplot_titles=(
+            f"{etf} Daily Returns",
+            f"{etf} Target Weight",
+            f"{etf} State Variable vs Threshold",
+        ),
+    )
+
+    # -------------------
+    # Row 1: Returns
+    # -------------------
+    if returns_as_bars:
+        colors = np.where(raw_ret >= 0, palette["pos"], palette["neg"])
+        fig.add_trace(
+            go.Bar(
+                x=x,
+                y=raw_ret,
+                name="Return",
+                marker_color=colors,
+                opacity=0.9,
+                hovertemplate="<b>%{x|%Y-%m-%d}</b><br>Return: %{y:.2%}<extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+    else:
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=raw_ret,
+                mode="lines",
+                name="Return",
+                line=dict(color=palette["strategy"], width=1.8),
+            ),
+            row=1,
+            col=1,
+        )
+
+    # -------------------
+    # Row 2: Weight
+    # -------------------
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=df["weight"],
+            mode="lines",
+            name="Weight",
+            line=dict(color=palette["weight"], width=2.5),
+        ),
+        row=2,
+        col=1,
+    )
+
+    fig.update_yaxes(range=[0, 0.1], row=2, col=1)
+
+    # -------------------
+    # Row 3: State vs Tau
+    # -------------------
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=df["_state_var"],
+            mode="lines",
+            name="State Variable",
+            line=dict(color=palette["state"], width=2.5),
+        ),
+        row=3,
+        col=1,
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=df["_tau_star"],
+            mode="lines",
+            name="τ*",
+            line=dict(color=palette["tau"], width=2, dash="dot"),
+        ),
+        row=3,
+        col=1,
+    )
+
+    if "signal" in df.columns:
+        _add_regime_shading(fig, df, xcol=date_col, signal_col="signal")
+
+    # -------------------
+    # Layout
+    # -------------------
+    _base_layout(
+        fig,
+        title=f"{etf} Regime Diagnostics",
+        height=700,
+        margin=dict(l=28, r=24, t=70, b=28),
+        show_legend=True,
+    )
+
+    fig.update_annotations(font=dict(size=13, color=PLOT_THEME["text"]))
+
+    fig.update_yaxes(title_text="Return", row=1, col=1, tickformat=".1%")
+    fig.update_yaxes(title_text="Weight", row=2, col=1, tickformat=".0%")
+    fig.update_yaxes(title_text="State and τ*", row=3, col=1)
+
+    # hide top axes
+    for r in [1, 2]:
+        fig.update_xaxes(showticklabels=False, row=r, col=1)
+
+    fig.update_xaxes(
+        title_text="Date",
+        dtick=7 * 24 * 60 * 60 * 1000,
+        tickformat="%b %d",
+        ticklabelmode="period",
+        row=3,
+        col=1,
+    )
+
+    if lock_xticks:
+        fig.update_xaxes(nticks=8, row=3, col=1)
+
+    return fig
 
 def plot_portfolio(df: pd.DataFrame) -> go.Figure:
     required = ["session_date", "portfolio_value", "bh_equity"]

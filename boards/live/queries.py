@@ -4,27 +4,55 @@ from typing import List
 import pandas as pd
 import numpy as np
 from io import BytesIO
+from typing import Optional, Tuple
 import requests
 
-S3_BASE = "https://quant-trading-project.s3.amazonaws.com/quant-trading/artifacts/live/performance/strategy=MultiAssetStateSignal/universe=SPY-Sector"
+S3_ROOT = "https://quant-trading-project.s3.amazonaws.com/quant-trading/artifacts/live/performance"
+
+STRATEGY_BASES = {
+    "long_only": f"{S3_ROOT}/strategy=xle-vol-regime-long-only/universe=SPY-Sector",
+    "long_short": f"{S3_ROOT}/strategy=xle-vol-regime-long-short/universe=SPY-Sector",
+    "sector_long_only": f"{S3_ROOT}/strategy=sector-vol-regime-long-only/universe=SPY-Sector",
+    "sector_long_test": f"{S3_ROOT}/strategy=MultiAssetStateSignal/universe=SPY-Sector",
+}
+
+
 def _get(url: str) -> requests.Response:
     r = requests.get(url, timeout=60)
     r.raise_for_status()
     return r
 
 
+def resolve_s3_base(strategy_key: str) -> str:
+    if strategy_key not in STRATEGY_BASES:
+        raise ValueError(
+            f"Unknown strategy_key={strategy_key!r}. "
+            f"Available: {list(STRATEGY_BASES)}"
+        )
 
-@lru_cache(maxsize=1)
-def load_data(_key=None):
-   
-    eq_resp = _get(f"{S3_BASE}/portfolio_timeseries.parquet")
+    return STRATEGY_BASES[strategy_key]
+
+
+@lru_cache(maxsize=16)
+def load_data(
+    cache_key: Optional[str] = None,
+    strategy_key: str = "long_only",
+) -> Tuple[pd.DataFrame, dict]:
+    """
+    Load dashboard data for the selected strategy.
+
+    cache_key should change daily, e.g. "2026-04-25-long_only",
+    so the dashboard refreshes once per day per strategy.
+    """
+
+    s3_base = resolve_s3_base(strategy_key)
+
+    eq_resp = _get(f"{s3_base}/portfolio_timeseries.parquet")
     equity = pd.read_parquet(BytesIO(eq_resp.content))
 
-    # performance = _get(f"{S3_BASE}/portfolio_metrics.json").json()
-    meta = _get(f"{S3_BASE}/meta.json").json()
+    meta = _get(f"{s3_base}/meta.json").json()
 
     return equity, meta
-
 
 
 def _ensure_session_date(df: pd.DataFrame, *, date_col: str) -> pd.DataFrame:
@@ -150,57 +178,129 @@ def normalize_portfolio(
 
 def normalize_etf_view(
     df: pd.DataFrame,
-    etf: str,
+    etf: str | None = None,
+    is_multi: bool = True,
     *,
     meta_cols: list[str] | None = None,
 ) -> pd.DataFrame:
     if meta_cols is None:
         meta_cols = ["session_date"]
 
-    prefix = f"{etf}_"
-
-    etf_cols = [c for c in df.columns if c.startswith(prefix)]
-    if not etf_cols:
-        raise ValueError(f"No columns found for ETF {etf!r}")
-
     missing_meta = [c for c in meta_cols if c not in df.columns]
     if missing_meta:
         raise ValueError(f"Missing meta columns: {missing_meta}")
 
-    keep = meta_cols + etf_cols
-    out = df[keep].copy()
+    prefix = f"{etf}_"
 
-    renamed = {c: c[len(prefix):] for c in etf_cols}
-    out = out.rename(columns=renamed)
-  
+    # Multi-asset: select one ETF and strip prefix
+    if is_multi and etf is not None:
+        etf_cols = [c for c in df.columns if c.startswith(prefix)]
+
+        if not etf_cols:
+            raise ValueError(f"No columns found for ETF {etf!r}")
+
+        keep = meta_cols + etf_cols
+        out = df[keep].copy()
+        out = out.rename(columns={c: c[len(prefix):] for c in etf_cols})
+
+    # Single-asset: keep normal columns and possible XLE_ columns
+    else:
+        single_asset_cols = [
+            "weight",
+            "XLE_weight",
+            "w_low",
+            "XLE_w_low",
+            "w_high",
+            "XLE_w_high",
+            "state_var",
+            "XLE_state_var",
+            "rvol",
+            "XLE_rvol",
+            "_state_var",
+            "XLE__state_var",
+            "_tau_star",
+            "XLE__tau_star",
+            "tau_star",
+            "XLE_tau_star",
+            "ret_cc",
+            "XLE_ret_cc",
+            "raw_ret",
+            "XLE_raw_ret",
+            "strategy_ret",
+            "portfolio_ret",
+            "equity",
+        ]
+
+        keep = meta_cols + [c for c in single_asset_cols if c in df.columns]
+        out = df[keep].copy()
+
+        # Strip XLE_ if standard column does not already exist
+        for col in list(out.columns):
+            if col.startswith("XLE_"):
+                stripped = col[len("XLE_"):]
+                if stripped not in out.columns:
+                    out = out.rename(columns={col: stripped})
 
     if "session_date" in out.columns and "date" not in out.columns:
         out = out.rename(columns={"session_date": "date"})
-    out = out.sort_values(by=['date'])
 
+    out = out.sort_values(by=["date"])
 
-    out["weight"] = out["weight"].ffill().fillna(0.0)
-    out["_state_var"] = pd.to_numeric(out["rvol"], errors="coerce").ffill().fillna(0)
-    out["_tau_star"] = pd.to_numeric(out["_tau_star"], errors="coerce").ffill().fillna(0)
+    # ---- normalize parameter columns ----
+    rename_map = {
+        "state_var": "_state_var",
+        "rvol": "_state_var",
+        "tau_star": "_tau_star",
+        "w_high": "_w_high",
+        "w_low": "_w_low",
+    }
+
+    for src, dst in rename_map.items():
+        if src in out.columns and dst not in out.columns:
+            out[dst] = out[src]
+
+    if "weight" not in out.columns:
+        out["weight"] = 0.0
+
+    if "_state_var" not in out.columns:
+        out["_state_var"] = 0.0
+
+    if "_tau_star" not in out.columns:
+        out["_tau_star"] = 0.0
+
+    out["weight"] = pd.to_numeric(out["weight"], errors="coerce").ffill().fillna(0.0)
+    out["_state_var"] = pd.to_numeric(out["_state_var"], errors="coerce").ffill().fillna(0.0)
+    out["_tau_star"] = pd.to_numeric(out["_tau_star"], errors="coerce").ffill().fillna(0.0)
+
+    if "_w_high" in out.columns:
+        out["_w_high"] = pd.to_numeric(out["_w_high"], errors="coerce").ffill()
+
+    if "_w_low" in out.columns:
+        out["_w_low"] = pd.to_numeric(out["_w_low"], errors="coerce").ffill()
 
     mask = out["_state_var"].notna() & out["_tau_star"].notna()
 
     out["signal"] = 0
-    out.loc[mask, "signal"] = (out.loc[mask, "_state_var"] > out.loc[mask, "_tau_star"]).astype(int)
+    out.loc[mask, "signal"] = (
+        out.loc[mask, "_state_var"] > out.loc[mask, "_tau_star"]
+    ).astype(int)
 
-    ret = out['ret_cc'].fillna(0.0)
-    simple_ret = np.exp(ret) - 1
-    out['raw_ret'] = simple_ret
+    if "ret_cc" in out.columns:
+        simple_ret = np.exp(out["ret_cc"].fillna(0.0)) - 1
+    elif "raw_ret" in out.columns:
+        simple_ret = out["raw_ret"].fillna(0.0)
+    else:
+        simple_ret = pd.Series(0.0, index=out.index)
 
-    weight = out["weight"].ffill().fillna(0.0)
+    out["raw_ret"] = simple_ret
+    out["etf_ret"] = out["weight"] * simple_ret
 
-    out["etf_ret"] = weight * simple_ret
-    out["etf_bh_ret"] = 0.10 * simple_ret
+    bh_weight = 0.10 if is_multi else 1.0
+    out["etf_bh_ret"] = bh_weight * simple_ret
 
     out["etf_equity"] = (1 + out["etf_ret"]).cumprod()
     out["etf_bh_equity"] = (1 + out["etf_bh_ret"]).cumprod()
 
-    # normalize to start at 1
     if not out.empty:
         out["etf_equity"] /= out["etf_equity"].iloc[0]
         out["etf_bh_equity"] /= out["etf_bh_equity"].iloc[0]

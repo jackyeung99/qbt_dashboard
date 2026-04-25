@@ -33,26 +33,34 @@ def _daily_key():
 
 
 def build_dashboard(ctx) -> Dict[str, Any]:
-    """
-    Registry entrypoint.
-    Returns a dict with:
-      - title
-      - route (optional)
-      - layout() -> Dash Component
-      - register_callbacks(app) -> None
-    """
+    strategy_options = [
+        {"label": "Sector ETF Long Only", "value": "sector_long_only"},
+        {"label": "XLE Long Only", "value": "long_only"},
+        {"label": "XLE Long / Short", "value": "long_short"},
+    ]
 
-    def load_live_data() -> Tuple:
-        return load_data(_daily_key())
+    default_strategy = "sector_long_only"
 
-    def layout() -> Component:
-        equity_df, meta = load_live_data()
+    def load_live_data(strategy_key: str | None = None) -> Tuple:
+        strategy_key = strategy_key or default_strategy
 
-        etfs = extract_etfs_from_weights(equity_df) if equity_df is not None and not equity_df.empty else []
+        return load_data(
+            cache_key=f"{_daily_key()}-{strategy_key}",
+            strategy_key=strategy_key,
+        )
+
+    def get_etf_options(strategy_key: str | None = None):
+        equity_df, _meta = load_live_data(strategy_key)
+
+        etfs = (
+            extract_etfs_from_weights(equity_df)
+            if equity_df is not None and not equity_df.empty
+            else []
+        )
 
         etf_options = [
             {
-                "label": ETF_LABEL_MAP.get(etf, etf),  # fallback if missing
+                "label": ETF_LABEL_MAP.get(etf, etf),
                 "value": etf,
             }
             for etf in etfs
@@ -60,14 +68,25 @@ def build_dashboard(ctx) -> Dict[str, Any]:
 
         default_etf = pick_default_etf(etfs)
 
+        return etf_options, default_etf
+
+    def layout() -> Component:
+        etf_options, default_etf = get_etf_options(default_strategy)
+
         return build_layout(
             title="Live Portfolio",
+            strategy_options=strategy_options,
+            default_strategy=default_strategy,
             etf_options=etf_options,
             default_etf=default_etf,
         )
 
     def _register(app: Dash) -> None:
-        register_callbacks(app, load_live_data=load_live_data)
+        register_callbacks(
+            app,
+            load_live_data=load_live_data,
+            get_etf_options=get_etf_options,
+        )
 
     return {
         "title": "Live Portfolio",

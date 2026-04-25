@@ -615,6 +615,7 @@ def build_portfolio_section() -> html.Div:
     )
 
     portfolio_bottom_row = html.Div(
+        id="portfolio-bottom-row",
         style={
             "display": "grid",
             "gridTemplateColumns": "1fr 1fr",
@@ -645,6 +646,40 @@ def build_portfolio_section() -> html.Div:
         ],
     )
 
+def build_strategy_selector(
+    *,
+    strategy_options: list[dict] | None = None,
+    default_strategy: str | None = None,
+) -> html.Div:
+    return html.Div(
+        style={
+            **sx_card(),
+            "padding": THEME["space"]["card_pad"],
+            "marginBottom": THEME["space"]["section_gap"],
+            "display": "flex",
+            "justifyContent": "space-between",
+            "alignItems": "center",
+            "gap": THEME["space"]["section_gap"],
+            "flexWrap": "wrap",
+        },
+        children=[
+            html.Div(
+                "Strategy",
+                style={
+                    "fontWeight": 800,
+                    "color": THEME["colors"]["text"],
+                },
+            ),
+            dcc.Dropdown(
+                id="strategy-selector",
+                options=strategy_options or [],
+                value=default_strategy,
+                placeholder="Select Strategy",
+                clearable=False,
+                style={"minWidth": "320px"},
+            ),
+        ],
+    )
 
 def build_asset_section(
     *,
@@ -841,12 +876,15 @@ def build_live_tab(*, etf_options=None, default_etf=None) -> html.Div:
             "gap": s["section_gap"],
         },
         children=[
-            build_portfolio_section(),
-            build_asset_section(
-                etf_options=etf_options,
-                default_etf=default_etf,
-            ),
-        ],
+        html.Div(
+            id="portfolio-diagnostics-wrapper",
+            children=[build_portfolio_section()],
+        ),
+        build_asset_section(
+            etf_options=etf_options,
+            default_etf=default_etf,
+        ),
+    ],
     )
 
 
@@ -868,6 +906,8 @@ def build_layout(
     *,
     title: str = "Live Portfolio",
     subtitle: str | None = None,
+    strategy_options: list[dict] | None = None,
+    default_strategy: str | None = None,
     etf_options: list[dict] | None = None,
     default_etf: str | None = None,
 ):
@@ -896,6 +936,11 @@ def build_layout(
         [
             dcc.Location(id="url"),
             build_header(title=title, subtitle=subtitle),
+
+            build_strategy_selector(
+                strategy_options=strategy_options,
+                default_strategy=default_strategy,
+            ),
 
             dcc.Tabs(
                 value="tab-live",
