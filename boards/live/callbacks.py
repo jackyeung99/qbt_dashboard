@@ -192,15 +192,20 @@ def register_callbacks(app: Dash, *, load_live_data, get_etf_options) -> None:
 
             if equity is None or equity.empty:
                 return {}, "-", "-", "-", "-", html.Div("No data")
+            
+            # for i in equity_raw.columns:
+            #     print(i)
+            
+            # print(equity_raw['XLE_rv'])
 
             is_multi = strategy_key == "sector_long_only"
-
             etf_df = normalize_etf_view(
                 equity,
                 etf=selected_etf,
                 is_multi=is_multi,
             )
 
+            # print(etf_df)
 
             if etf_df is None or etf_df.empty:
                 return {}, "-", "-", "-", "-", html.Div("No ETF data")

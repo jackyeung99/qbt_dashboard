@@ -10,19 +10,17 @@ from common.plots import fmt
 
 
 PAL = {
-    "bh": "#0f172a",        # slate (buy&hold)
-    "strategy": "#dc2626",  # near-black navy
-    "pos": "#16a34a",       # green
-    "neg": "#dc2626",       # red
-    "weight": "#7c3aed",    # violet
-    "state": "#f59e0b",     # amber
-    "tau": "#06b6d4",       # cyan
+    "bh": "#0f172a",          # slate / benchmark
+    "strategy": "#2563eb",    # blue / strategy
+    "pos": "#16a34a",         # green / positive return
+    "neg": "#dc2626",         # red / negative return
+    "weight": "#7c3aed",      # violet / allocation
+    "state": "#f59e0b",       # amber / state variable
+    "tau": "#0891b2",         # cyan / threshold
+    "regime_high": "rgba(245,158,11,0.20)",  # amber shading
+    "regime_high_legend": "rgba(245,158,11,0.65)",
     "grid": "rgba(15,23,42,0.08)",
-    "regime_buy": "rgba(100,100,100,0.08)",   # soft green band
 }
-
-
-
 # ============================================================
 # 2) Plot helpers
 # ============================================================
@@ -39,68 +37,86 @@ def _add_regime_shading(
     *,
     xcol: str = "date",
     signal_col: str = "signal",
+    high_fill: str = PAL["regime_high"],
+    show_legend: bool = True,
+    legend_name: str = "High-Vol Regime",
 ) -> None:
     if xcol not in df.columns or signal_col not in df.columns or df.empty:
         return
 
-    x = df[xcol]
-    sig = pd.to_numeric(df[signal_col], errors="coerce").ffill()
-    sig = sig.where(sig.isin([0, 1]))
+    tmp = df[[xcol, signal_col]].copy()
+    tmp[xcol] = pd.to_datetime(tmp[xcol], errors="coerce")
+    tmp[signal_col] = pd.to_numeric(tmp[signal_col], errors="coerce").ffill()
 
-    valid = sig.notna()
-    if not valid.any():
+    tmp = tmp.dropna(subset=[xcol, signal_col])
+    tmp = tmp[tmp[signal_col].isin([0, 1])]
+
+    if tmp.empty:
         return
 
-    x = x.loc[valid]
-    sig = sig.loc[valid].astype(int)
-
-    if len(x) == 0:
-        return
+    tmp = tmp.sort_values(xcol).reset_index(drop=True)
 
     shapes = []
-    start = x.iloc[0]
-    prev = int(sig.iloc[0])
+    start = tmp.loc[0, xcol]
+    prev_signal = int(tmp.loc[0, signal_col])
 
-    for ts, s in zip(x.iloc[1:], sig.iloc[1:]):
-        s = int(s)
-        if s != prev:
-            fill = "rgba(239,68,68,0.08)" if prev == 1 else "rgba(34,197,94,0.08)"
-            shapes.append(
-                dict(
-                    type="rect",
-                    xref="x",
-                    yref="paper",
-                    x0=start,
-                    x1=ts,
-                    y0=0,
-                    y1=1,
-                    fillcolor=fill,
-                    line=dict(width=0),
-                    layer="below",
+    for i in range(1, len(tmp)):
+        cur_signal = int(tmp.loc[i, signal_col])
+
+        if cur_signal != prev_signal:
+            end = tmp.loc[i, xcol]
+
+            if prev_signal == 1:
+                shapes.append(
+                    dict(
+                        type="rect",
+                        xref="x",
+                        yref="paper",
+                        x0=start,
+                        x1=end,
+                        y0=0,
+                        y1=1,
+                        fillcolor=high_fill,
+                        line=dict(width=0),
+                        layer="below",
+                    )
                 )
-            )
-            start = ts
-            prev = s
 
-    # final segment
-    fill = "rgba(239,68,68,0.08)" if prev == 1 else "rgba(34,197,94,0.08)"
-    shapes.append(
-        dict(
-            type="rect",
-            xref="x",
-            yref="paper",
-            x0=start,
-            x1=x.iloc[-1],
-            y0=0,
-            y1=1,
-            fillcolor=fill,
-            line=dict(width=0),
-            layer="below",
+            start = end
+            prev_signal = cur_signal
+
+    if prev_signal == 1:
+        shapes.append(
+            dict(
+                type="rect",
+                xref="x",
+                yref="paper",
+                x0=start,
+                x1=tmp.loc[len(tmp) - 1, xcol],
+                y0=0,
+                y1=1,
+                fillcolor=high_fill,
+                line=dict(width=0),
+                layer="below",
+            )
         )
-    )
 
     existing_shapes = list(fig.layout.shapes) if fig.layout.shapes else []
     fig.update_layout(shapes=existing_shapes + shapes)
+
+    if show_legend:
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="lines",
+                name=legend_name,
+                line=dict(color=PAL["regime_high_legend"], width=10),
+                hoverinfo="skip",
+                showlegend=True,
+                legendgroup="regime",
+            )
+        )
 
 def get_allocation_with_cash(df: pd.DataFrame) -> pd.Series:
     weight_cols = [c for c in df.columns if c.endswith("_weight")]
@@ -161,12 +177,14 @@ def _base_layout(
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.08,
+            y=1.04,
             xanchor="right",
             x=1.0,
-            bgcolor=PLOT_THEME["legend_bg"],
+            bgcolor="rgba(255,255,255,0.85)",
             borderwidth=0,
-            font=dict(size=12),
+            font=dict(size=11),
+            itemclick="toggle",
+            itemdoubleclick="toggleothers",
         ),
         hoverlabel=dict(
             bgcolor="white",
@@ -176,14 +194,6 @@ def _base_layout(
         showlegend=show_legend,
     )
 
-    # fig.update_xaxes(
-    #     showgrid=True,
-    #     gridcolor=PLOT_THEME["grid"],
-    #     zeroline=False,
-    #     linecolor=PLOT_THEME["axis"],
-    #     tickfont=dict(color=PLOT_THEME["muted"]),
-    #     title_font=dict(color=PLOT_THEME["muted"]),
-    # )
     fig.update_yaxes(
         showgrid=True,
         gridcolor=PLOT_THEME["grid"],
@@ -192,6 +202,7 @@ def _base_layout(
         tickfont=dict(color=PLOT_THEME["muted"]),
         title_font=dict(color=PLOT_THEME["muted"]),
     )
+
     return fig
 
 
@@ -433,8 +444,9 @@ def plot_rv_tau_weights_returns_equity(
     fig.update_yaxes(title_text="Equity", row=1, col=1)
     fig.update_yaxes(title_text="Return", row=2, col=1, tickformat=".1%")
     fig.update_yaxes(title_text="Weight", row=3, col=1, tickformat=".0%")
-    fig.update_yaxes(title_text="State and τ*", row=4, col=1)
+    fig.update_yaxes(title_text="State and τ*", row=4, col=1, type='log')
 
+    
     # -------------------
     # Hide x-axis on top 3 rows
     # -------------------
@@ -547,7 +559,7 @@ def plot_single_asset_rv_tau_weight_return(
         col=1,
     )
 
-    fig.update_yaxes(range=[0, 0.1], row=2, col=1)
+    fig.update_yaxes(range=[-.5, 1], row=2, col=1)
 
     # -------------------
     # Row 3: State vs Tau
@@ -594,7 +606,7 @@ def plot_single_asset_rv_tau_weight_return(
 
     fig.update_yaxes(title_text="Return", row=1, col=1, tickformat=".1%")
     fig.update_yaxes(title_text="Weight", row=2, col=1, tickformat=".0%")
-    fig.update_yaxes(title_text="State and τ*", row=3, col=1)
+    fig.update_yaxes(title_text="State and τ*", row=3, col=1, type='log')
 
     # hide top axes
     for r in [1, 2]:

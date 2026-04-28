@@ -192,6 +192,13 @@ def normalize_etf_view(
 
     prefix = f"{etf}_"
 
+    # Get state_var name before selecting/renaming columns
+    state_var_name = None
+    if "state_var" in df.columns:
+        vals = df["state_var"].dropna().astype(str)
+        if not vals.empty:
+            state_var_name = vals.iloc[-1]
+
     # Multi-asset: select one ETF and strip prefix
     if is_multi and etf is not None:
         etf_cols = [c for c in df.columns if c.startswith(prefix)]
@@ -199,7 +206,21 @@ def normalize_etf_view(
         if not etf_cols:
             raise ValueError(f"No columns found for ETF {etf!r}")
 
-        keep = meta_cols + etf_cols
+        # Include global metadata/config columns if present
+        global_cols = [
+            c for c in ["state_var", "tau_star", "_tau_star", "w_low", "w_high"]
+            if c in df.columns
+        ]
+
+        # If state_var = "rvol", include ETF-specific numeric column like XLE_rvol
+        if state_var_name is not None:
+            etf_state_var_col = f"{etf}_{state_var_name}"
+            if etf_state_var_col in df.columns and etf_state_var_col not in etf_cols:
+                etf_cols.append(etf_state_var_col)
+
+        keep = meta_cols + global_cols + etf_cols
+        keep = list(dict.fromkeys(keep))
+
         out = df[keep].copy()
         out = out.rename(columns={c: c[len(prefix):] for c in etf_cols})
 
@@ -232,6 +253,8 @@ def normalize_etf_view(
         ]
 
         keep = meta_cols + [c for c in single_asset_cols if c in df.columns]
+        keep = list(dict.fromkeys(keep))
+
         out = df[keep].copy()
 
         # Strip XLE_ if standard column does not already exist
@@ -244,12 +267,40 @@ def normalize_etf_view(
     if "session_date" in out.columns and "date" not in out.columns:
         out = out.rename(columns={"session_date": "date"})
 
-    out = out.sort_values(by=["date"])
+    out = out.sort_values(by=["date"]).reset_index(drop=True)
 
     # ---- normalize parameter columns ----
+
+    # state_var is a string/name, e.g. "rvol"
+    # Resolve it into the actual numeric column.
+    state_var_col = "rvol"
+
+    if not is_multi and "XLE_rvol" in out.columns:
+        state_var_col = "XLE_rvol"
+
+    if "state_var" in out.columns:
+        vals = out["state_var"].dropna().astype(str)
+        if not vals.empty:
+            candidate = vals.iloc[-1]
+
+            # Only use candidate if it actually exists as a numeric column
+            if candidate in out.columns:
+                state_var_col = candidate
+            elif f"{etf}_{candidate}" in out.columns:
+                state_var_col = f"{etf}_{candidate}"
+            elif candidate == "rvol" and "XLE_rvol" in out.columns:
+                state_var_col = "XLE_rvol"
+
+    if state_var_col in out.columns:
+        out["_state_var"] = out[state_var_col]
+    elif "rvol" in out.columns:
+        out["_state_var"] = out["rvol"]
+    elif "XLE_rvol" in out.columns:
+        out["_state_var"] = out["XLE_rvol"]
+    else:
+        out["_state_var"] = 0.0
+
     rename_map = {
-        "state_var": "_state_var",
-        "rvol": "_state_var",
         "tau_star": "_tau_star",
         "w_high": "_w_high",
         "w_low": "_w_low",
@@ -261,9 +312,6 @@ def normalize_etf_view(
 
     if "weight" not in out.columns:
         out["weight"] = 0.0
-
-    if "_state_var" not in out.columns:
-        out["_state_var"] = 0.0
 
     if "_tau_star" not in out.columns:
         out["_tau_star"] = 0.0
